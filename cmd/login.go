@@ -68,7 +68,7 @@ If ARL is not supplied as an argument, it is read interactively without echo.`,
 			}
 			defer st.Close()
 
-			if err := credentials.SetARL(context.Background(), st, cfg.Paths.DBPath, arl); err != nil {
+			if err := credentials.SetARL(context.Background(), st, arl); err != nil {
 				return fmt.Errorf("save ARL: %w", err)
 			}
 			fmt.Fprintln(cmdOut, "ARL saved (encrypted)")

@@ -77,7 +77,7 @@ func runFixture(raw string) error {
 	}
 	defer st.Close()
 
-	arl, err := credentials.LoadARL(context.Background(), cfg.Deezer.ARL, cfg.Paths.DBPath, st)
+	arl, err := credentials.LoadARL(context.Background(), cfg.Deezer.ARL, st)
 	if err != nil {
 		return fmt.Errorf("load credentials: %w", err)
 	}

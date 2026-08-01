@@ -47,7 +47,7 @@ func New(cfg *config.Config, log *slog.Logger) (*Daemon, error) {
 		return nil, err
 	}
 
-	arl, err := credentials.LoadARL(context.Background(), cfg.Deezer.ARL, cfg.Paths.DBPath, st)
+	arl, err := credentials.LoadARL(context.Background(), cfg.Deezer.ARL, st)
 	if err != nil {
 		st.Close()
 		return nil, fmt.Errorf("load credentials: %w", err)
