@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"deebeets/internal/downloader"
 	"deebeets/internal/store"
 )
 
@@ -49,9 +50,11 @@ func statusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			dlStatus, _ := s.GetMeta(ctx(), downloader.MetaDownloadStatus)
 			last, _ := s.GetMeta(ctx(), "last_sync")
+			running := counts[store.StateDownloading] > 0
 			fmt.Println("daemon: not running (showing database snapshot)")
-			printStatus("stopped", false, false, last, counts)
+			printStatus(dlStatus, running, false, last, counts)
 			return nil
 		},
 	}

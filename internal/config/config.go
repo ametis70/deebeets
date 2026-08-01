@@ -6,6 +6,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,6 +28,11 @@ type Config struct {
 	Tags      Tags      `koanf:"tags"`
 	Beets     Beets     `koanf:"beets"`
 	PostHooks []string  `koanf:"posthooks"`
+
+	// FixtureAlbums is populated from DEEBEETS_FIXTURE_ALBUMS (comma-separated
+	// album IDs). When set the daemon's sync uses this list instead of fetching
+	// real Deezer favorites, exercising the full pipeline on a controlled set.
+	FixtureAlbums []int64 `koanf:"-"`
 }
 
 // Deezer holds credentials and format preferences.
@@ -103,6 +109,9 @@ const (
 	EnvPrefix = "DEEBEETS_"
 	// EnvARL is a dedicated override for the sensitive ARL value.
 	EnvARL = "DEEBEETS_ARL"
+	// EnvFixtureAlbums is a comma-separated list of album IDs used to run the
+	// full pipeline against a fixed set instead of real Deezer favorites.
+	EnvFixtureAlbums = "DEEBEETS_FIXTURE_ALBUMS"
 )
 
 // Defaults returns the built-in configuration, tuned to work out-of-the-box
@@ -194,6 +203,20 @@ func Load(path string) (*Config, error) {
 	// so handle it explicitly here.)
 	if arl := os.Getenv(EnvARL); arl != "" {
 		cfg.Deezer.ARL = arl
+	}
+
+	if raw := os.Getenv(EnvFixtureAlbums); raw != "" {
+		for _, s := range strings.Split(raw, ",") {
+			s = strings.TrimSpace(s)
+			if s == "" {
+				continue
+			}
+			id, err := strconv.ParseInt(s, 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("%s: invalid album id %q", EnvFixtureAlbums, s)
+			}
+			cfg.FixtureAlbums = append(cfg.FixtureAlbums, id)
+		}
 	}
 
 	if err := cfg.Validate(); err != nil {

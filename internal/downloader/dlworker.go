@@ -87,11 +87,23 @@ func (p *Pipeline) attemptDownload(ctx context.Context, item *store.Item) error 
 		p.log.Warn("tagging failed", "sng_id", item.SngID, "err", err)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(finalPath), 0o755); err != nil {
+	albumDir := filepath.Dir(finalPath)
+	if err := os.MkdirAll(albumDir, 0o755); err != nil {
 		return fmt.Errorf("mkdir: %w", err)
 	}
 	if err := os.Rename(tmp, finalPath); err != nil {
 		return fmt.Errorf("move into place: %w", err)
+	}
+
+	// Write cover.jpg alongside the tracks if not already present.
+	// Navidrome picks this up automatically for folder art.
+	if len(md.Cover) > 0 {
+		coverPath := filepath.Join(albumDir, "cover.jpg")
+		if _, err := os.Stat(coverPath); os.IsNotExist(err) {
+			if err := os.WriteFile(coverPath, md.Cover, 0o644); err != nil {
+				p.log.Warn("failed to write cover.jpg", "path", coverPath, "err", err)
+			}
+		}
 	}
 
 	p.gate.clear()

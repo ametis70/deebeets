@@ -34,17 +34,9 @@ func (d *Daemon) Status(ctx context.Context) (control.StatusResponse, error) {
 
 // Sync kicks off a background favorites sync (single-flight). It returns
 // immediately so the CLI need not stay connected for large libraries.
+// When FixtureAlbums is set in config, it enqueues those albums instead of
+// fetching real Deezer favorites, exercising the full pipeline on a fixed set.
 func (d *Daemon) Sync(ctx context.Context, sel control.Selection) (control.SyncStarted, error) {
-	dsel := deezer.Selection(sel)
-	if !dsel.Any() {
-		// Default to the configured favorite types.
-		f := d.cfg.Download.Favorites
-		dsel = deezer.Selection{Albums: f.Albums, Artists: f.Artists, Playlists: f.Playlists, Tracks: f.Tracks}
-	}
-	if !dsel.Any() {
-		return control.SyncStarted{}, fmt.Errorf("no favorite types selected")
-	}
-
 	d.syncMu.Lock()
 	if d.syncing {
 		d.syncMu.Unlock()
@@ -53,8 +45,37 @@ func (d *Daemon) Sync(ctx context.Context, sel control.Selection) (control.SyncS
 	d.syncing = true
 	d.syncMu.Unlock()
 
+	if len(d.cfg.FixtureAlbums) > 0 {
+		go func() {
+			n, err := d.pipe.EnqueueIDs(d.ctx, deezer.KindAlbum, d.cfg.FixtureAlbums)
+			d.syncMu.Lock()
+			d.syncing = false
+			d.syncMu.Unlock()
+			if err != nil {
+				d.log.Error("fixture sync failed", "err", err)
+				return
+			}
+			_ = d.store.SetMeta(d.ctx, "last_sync",
+				fmt.Sprintf("%s (fixture: %d tracks from %d albums)", nowStamp(), n, len(d.cfg.FixtureAlbums)))
+			d.log.Info("fixture sync complete", "albums", len(d.cfg.FixtureAlbums), "tracks", n)
+		}()
+		return control.SyncStarted{Started: true, Message: "fixture sync started"}, nil
+	}
+
+	dsel := deezer.Selection(sel)
+	if !dsel.Any() {
+		// Default to the configured favorite types.
+		f := d.cfg.Download.Favorites
+		dsel = deezer.Selection{Albums: f.Albums, Artists: f.Artists, Playlists: f.Playlists, Tracks: f.Tracks}
+	}
+	if !dsel.Any() {
+		d.syncMu.Lock()
+		d.syncing = false
+		d.syncMu.Unlock()
+		return control.SyncStarted{}, fmt.Errorf("no favorite types selected")
+	}
+
 	go func() {
-		// Use the daemon context so the sync survives CLI disconnect.
 		res, err := d.pipe.Sync(d.ctx, dsel)
 		d.syncMu.Lock()
 		d.syncing = false
