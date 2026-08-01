@@ -1,0 +1,67 @@
+# deebeets configuration. Copy to config.toml and edit.
+# Every value can also be overridden via env vars, e.g.
+#   DEEBEETS_DOWNLOAD_CONCURRENCY=5
+# Prefer the dedicated DEEBEETS_ARL env var over putting the ARL in this file.
+
+[deezer]
+# Your Deezer ARL cookie. Leave empty and export DEEBEETS_ARL instead.
+arl = ""
+# Formats tried in order; first one the account/track can serve wins.
+# FLAC requires a Deezer HiFi subscription.
+format_priority = ["FLAC", "MP3_320", "MP3_128"]
+
+[paths]
+music_dir = "./music"
+db_path = "./deebeets.db"
+socket_path = "./deebeets.sock"
+
+[download]
+# Tracks downloaded in parallel (the "batch" size).
+concurrency = 3
+# Optional pause between batches, e.g. "2s". "0s" disables it.
+inter_batch_delay = "0s"
+
+[download.favorites]
+# Default item types pulled by `deebeets sync` when no flags are given.
+albums = false
+artists = false
+playlists = false
+tracks = true
+
+[retry]
+# immediate | deferred | both
+mode = "both"
+max_attempts = 3
+backoff = "5s"
+
+[ratelimit]
+# Base backoff after a rate-limit hit (grows exponentially).
+cooldown = "30s"
+# max_hits within window triggers a hard stop of the download stage.
+max_hits = 5
+window = "5m"
+
+[tags]
+# Baseline tags deebeets writes before beets runs. beets remains canonical.
+fields = [
+  "title", "artist", "albumartist", "album",
+  "tracknumber", "totaltracks", "discnumber", "disctotal",
+  "date", "genre", "composer", "isrc", "barcode",
+  "copyright", "bpm", "replaygain", "comment", "lyrics", "cover",
+]
+# Go text/template producing the file path relative to music_dir.
+# Available fields: AlbumArtist, Album, Artist, Title, Year, Track, TotalTracks,
+# Disc, TotalDiscs, MultiDisc, Ext.
+naming_template = "{{.AlbumArtist}}/{{.Album}}{{if .Year}} ({{.Year}}){{end}}/{{if .MultiDisc}}{{.Disc}}-{{end}}{{printf \"%02d\" .Track}} {{.Title}}.{{.Ext}}"
+
+[beets]
+enabled = false
+binary = "beet"
+# Path to a beets config; empty uses beets' own default.
+config_path = ""
+args = ["import", "-q"]
+# Keep at 1 to serialize beets and avoid library-db lock contention.
+concurrency = 1
+
+# Commands run after a successful import. Each string is run via the shell.
+posthooks = []
