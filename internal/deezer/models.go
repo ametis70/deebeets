@@ -82,6 +82,27 @@ func (t *GWTrack) DiscNumberInt() int {
 	return n
 }
 
+// ReleaseYear returns the 4-digit release year, preferring the physical then
+// digital release date, or 0 if unknown.
+func (t *GWTrack) ReleaseYear() int {
+	for _, d := range []string{t.PhysicalReleaseDate, t.DigitalReleaseDate} {
+		if len(d) >= 4 {
+			if y, err := strconv.Atoi(d[:4]); err == nil && y > 0 {
+				return y
+			}
+		}
+	}
+	return 0
+}
+
+// ReleaseDate returns the best available release date string (YYYY-MM-DD).
+func (t *GWTrack) ReleaseDate() string {
+	if t.PhysicalReleaseDate != "" {
+		return t.PhysicalReleaseDate
+	}
+	return t.DigitalReleaseDate
+}
+
 // userData is the parsed deezer.getUserData result.
 type userData struct {
 	User struct {

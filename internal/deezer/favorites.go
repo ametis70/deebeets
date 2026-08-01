@@ -221,6 +221,68 @@ func (c *Client) yieldAlbum(ctx context.Context, albID int64, blocked BlockedFun
 	return nil
 }
 
+// TracksByKind expands a single external id of the given kind into its tracks.
+// Used by `download <ids> --type ...`.
+func (c *Client) TracksByKind(ctx context.Context, kind string, id int64) ([]FavItem, error) {
+	if c.UserID() == 0 {
+		if err := c.Login(ctx); err != nil {
+			return nil, err
+		}
+	}
+	sid := fmt.Sprintf("%d", id)
+	switch kind {
+	case KindTrack:
+		t, err := c.GetTrack(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if t.SngID == "" {
+			return nil, nil
+		}
+		return []FavItem{trackToFav(t, KindTrack, t.SngID)}, nil
+	case KindAlbum:
+		tracks, err := c.albumTracks(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		return favsFrom(tracks, KindAlbum, sid), nil
+	case KindPlaylist:
+		tracks, err := c.playlistTracks(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		return favsFrom(tracks, KindPlaylist, sid), nil
+	case KindArtist:
+		albIDs, err := c.artistAlbumIDs(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		var out []FavItem
+		for _, albID := range albIDs {
+			tracks, err := c.albumTracks(ctx, albID)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, favsFrom(tracks, KindArtist, sid)...)
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("unknown kind %q", kind)
+	}
+}
+
+func favsFrom(tracks []GWTrack, sourceType, sourceID string) []FavItem {
+	out := make([]FavItem, 0, len(tracks))
+	for j := range tracks {
+		t := &tracks[j]
+		if t.SngID == "" {
+			continue
+		}
+		out = append(out, trackToFav(t, sourceType, sourceID))
+	}
+	return out
+}
+
 func trackToFav(t *GWTrack, sourceType, sourceID string) FavItem {
 	return FavItem{
 		SngID:       t.ID(),

@@ -208,6 +208,76 @@ func (s *Store) ClaimImport(ctx context.Context) (*Item, bool, error) {
 	return it, true, nil
 }
 
+// ClaimImportGroup atomically claims all downloaded tracks of the oldest ready
+// release (grouped by group_key) and moves them to `importing`, so beets runs
+// once per album. Tracks with an empty group_key are claimed individually.
+// Returns (nil, false, nil) when nothing is ready to import.
+func (s *Store) ClaimImportGroup(ctx context.Context) ([]*Item, bool, error) {
+	var gk string
+	var sngID int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT group_key, sng_id FROM items WHERE state = ? ORDER BY updated_at ASC LIMIT 1`,
+		StateDownloaded).Scan(&gk, &sngID)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+
+	now := time.Now().Unix()
+	var rows *sql.Rows
+	if gk != "" {
+		rows, err = s.db.QueryContext(ctx, `
+			UPDATE items SET state = ?, updated_at = ?
+			WHERE group_key = ? AND state = ?
+			RETURNING `+itemColumns,
+			StateImporting, now, gk, StateDownloaded)
+	} else {
+		rows, err = s.db.QueryContext(ctx, `
+			UPDATE items SET state = ?, updated_at = ?
+			WHERE sng_id = ? AND state = ?
+			RETURNING `+itemColumns,
+			StateImporting, now, sngID, StateDownloaded)
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	var out []*Item
+	for rows.Next() {
+		it, err := scanItem(rows)
+		if err != nil {
+			return nil, false, err
+		}
+		out = append(out, it)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	return out, len(out) > 0, nil
+}
+
+// SetStateMany sets the state for several tracks at once.
+func (s *Store) SetStateMany(ctx context.Context, sngIDs []int64, state string) error {
+	for _, id := range sngIDs {
+		if err := s.SetState(ctx, id, state); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// MarkFailedMany records the same failure for several tracks.
+func (s *Store) MarkFailedMany(ctx context.Context, sngIDs []int64, stage, errMsg string) error {
+	for _, id := range sngIDs {
+		if err := s.MarkFailed(ctx, id, stage, errMsg); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // UpdateProgress records resumable download progress.
 func (s *Store) UpdateProgress(ctx context.Context, sngID, bytesDone int64, tmpPath string) error {
 	_, err := s.db.ExecContext(ctx,

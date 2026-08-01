@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 )
@@ -159,6 +160,34 @@ func (c *Client) ResolveDownload(ctx context.Context, t *GWTrack, formatPriority
 		return nil, lastErr
 	}
 	return nil, fmt.Errorf("no downloadable source for track %d", t.ID())
+}
+
+// FetchCover downloads the album cover JPEG for a track's ALB_PICTURE hash at
+// the given square size. Returns (nil, "", nil) when no picture is available.
+func (c *Client) FetchCover(ctx context.Context, albPicture string, size int) ([]byte, string, error) {
+	if albPicture == "" {
+		return nil, "", nil
+	}
+	url := fmt.Sprintf("https://e-cdns-images.dzcdn.net/images/cover/%s/%dx%d-000000-80-0-0.jpg",
+		albPicture, size, size)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Set("User-Agent", userAgent)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", nil
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return nil, "", err
+	}
+	return data, "image/jpeg", nil
 }
 
 // Download opens the (encrypted) body stream for a resolved URL, optionally
