@@ -1,0 +1,26 @@
+# Binaries
+/deebeets
+/dist/
+*.exe
+
+# Local runtime state (SQLite is the source of truth — keep it out of git)
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Control socket
+*.sock
+
+# Local config may contain a real ARL — never commit it
+config.toml
+.env
+
+# Downloaded music / scratch
+/music/
+/downloads/
+
+# OS / editor
+.DS_Store
+*.swp
