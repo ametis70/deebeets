@@ -11,7 +11,6 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"sync"
-	"time"
 )
 
 const (
@@ -44,11 +43,10 @@ func New(arl string) (*Client, error) {
 		return nil, err
 	}
 	c := &Client{
-		http: &http.Client{
-			Jar:     jar,
-			Timeout: 30 * time.Second,
-		},
-		arl: arl,
+		// No client-level Timeout: all requests use context, and the body-read
+		// timeout would cut off large FLAC downloads on slow connections.
+		http: &http.Client{Jar: jar},
+		arl:  arl,
 	}
 	u, _ := url.Parse("https://www.deezer.com")
 	jar.SetCookies(u, []*http.Cookie{{
