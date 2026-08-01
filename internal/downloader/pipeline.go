@@ -119,6 +119,73 @@ func (p *Pipeline) StopDownload() {
 	_ = p.store.SetMeta(context.Background(), MetaDownloadStatus, StatusStopped)
 }
 
+// DrainOnce runs the download stage until the queue is empty, then returns.
+// Unlike downloadStage it does not idle-loop — suitable for one-shot runs
+// where the caller knows all items have been enqueued up-front.
+func (p *Pipeline) DrainOnce(ctx context.Context) {
+	deferredDone := false
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		if wait, hard := p.gate.blockedFor(); hard {
+			p.log.Warn("rate limit hard stop: aborting run")
+			return
+		} else if wait > 0 {
+			if !sleepCtx(ctx, wait) {
+				return
+			}
+			continue
+		}
+
+		batch := p.claimBatch(ctx)
+		if len(batch) == 0 {
+			if !deferredDone && p.requeueDeferred(ctx) {
+				deferredDone = true
+				continue
+			}
+			return
+		}
+		deferredDone = false
+
+		var wg sync.WaitGroup
+		for _, it := range batch {
+			wg.Add(1)
+			go func(item *store.Item) {
+				defer wg.Done()
+				p.downloadOne(ctx, item)
+			}(it)
+		}
+		wg.Wait()
+
+		if d := p.cfg.Download.InterBatchDelay; d > 0 {
+			if !sleepCtx(ctx, d) {
+				return
+			}
+		}
+	}
+}
+
+// FlushImport waits until all in-flight import items (downloaded, importing)
+// are gone, then cancels ctx and waits for import workers to exit. Call this
+// after DrainOnce to cleanly finish a one-shot run.
+func (p *Pipeline) FlushImport(ctx context.Context, cancel context.CancelFunc) {
+	defer cancel()
+	defer p.WaitImport()
+	if !p.importActive {
+		return
+	}
+	const poll = 500 * time.Millisecond
+	bg := context.Background()
+	for ctx.Err() == nil {
+		items, err := p.store.List(bg, []string{store.StateDownloaded, store.StateImporting}, 0)
+		if err != nil || len(items) == 0 {
+			return
+		}
+		sleepCtx(ctx, poll)
+	}
+}
+
 // downloadStage runs batches until the context is cancelled. Each batch claims
 // up to Concurrency tracks, runs them in parallel, waits for all to finish, then
 // optionally pauses before the next batch.

@@ -65,6 +65,16 @@ func loadOrCreateKey(dbPath string) ([]byte, error) {
 	return key, nil
 }
 
+// LoadARL returns configARL if non-empty, otherwise reads the encrypted
+// credential from st. This centralises the resolution order: config/env first,
+// then the encrypted credential in the database.
+func LoadARL(ctx context.Context, configARL, dbPath string, st metaStore) (string, error) {
+	if configARL != "" {
+		return configARL, nil
+	}
+	return GetARL(ctx, st, dbPath)
+}
+
 // SetARL encrypts arl and persists it in the meta table.
 func SetARL(ctx context.Context, st metaStore, dbPath, arl string) error {
 	key, err := loadOrCreateKey(dbPath)

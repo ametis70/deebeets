@@ -47,17 +47,14 @@ func New(cfg *config.Config, log *slog.Logger) (*Daemon, error) {
 		return nil, err
 	}
 
-	arl := cfg.Deezer.ARL
+	arl, err := credentials.LoadARL(context.Background(), cfg.Deezer.ARL, cfg.Paths.DBPath, st)
+	if err != nil {
+		st.Close()
+		return nil, fmt.Errorf("load credentials: %w", err)
+	}
 	if arl == "" {
-		arl, err = credentials.GetARL(context.Background(), st, cfg.Paths.DBPath)
-		if err != nil {
-			st.Close()
-			return nil, fmt.Errorf("load credentials: %w", err)
-		}
-		if arl == "" {
-			st.Close()
-			return nil, fmt.Errorf("no ARL configured — run `deebeets login`, set deezer.arl in config, or export DEEBEETS_ARL")
-		}
+		st.Close()
+		return nil, fmt.Errorf("no ARL configured — run `deebeets login`, set deezer.arl in config, or export DEEBEETS_ARL")
 	}
 
 	dz, err := deezer.New(arl)
