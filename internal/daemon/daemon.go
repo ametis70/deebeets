@@ -14,6 +14,7 @@ import (
 	"deebeets/internal/beets"
 	"deebeets/internal/config"
 	"deebeets/internal/control"
+	"deebeets/internal/credentials"
 	"deebeets/internal/deezer"
 	"deebeets/internal/downloader"
 	"deebeets/internal/store"
@@ -41,14 +42,25 @@ type Daemon struct {
 
 // New builds a Daemon from config.
 func New(cfg *config.Config, log *slog.Logger) (*Daemon, error) {
-	if cfg.Deezer.ARL == "" {
-		return nil, fmt.Errorf("no ARL configured (set deezer.arl or DEEBEETS_ARL)")
-	}
 	st, err := store.Open(cfg.Paths.DBPath)
 	if err != nil {
 		return nil, err
 	}
-	dz, err := deezer.New(cfg.Deezer.ARL)
+
+	arl := cfg.Deezer.ARL
+	if arl == "" {
+		arl, err = credentials.GetARL(context.Background(), st, cfg.Paths.DBPath)
+		if err != nil {
+			st.Close()
+			return nil, fmt.Errorf("load credentials: %w", err)
+		}
+		if arl == "" {
+			st.Close()
+			return nil, fmt.Errorf("no ARL configured — run `deebeets login`, set deezer.arl in config, or export DEEBEETS_ARL")
+		}
+	}
+
+	dz, err := deezer.New(arl)
 	if err != nil {
 		st.Close()
 		return nil, err

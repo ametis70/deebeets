@@ -45,6 +45,7 @@ func rootCmd() *cobra.Command {
 	root.PersistentFlags().StringVar(&logLevel, "log-level", "info", "log level: debug|info|warn|error")
 
 	root.AddCommand(
+		loginCmd(),
 		daemonCmd(),
 		syncCmd(),
 		startCmd(),
