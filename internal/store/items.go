@@ -368,6 +368,28 @@ func (s *Store) Requeue(ctx context.Context, sngIDs []int64, clearFile bool) (in
 	return int(n), nil
 }
 
+// GroupProgress returns (terminal, total) counts for items sharing a group_key.
+// Terminal states are finished, failed, skipped, and blocklisted.
+func (s *Store) GroupProgress(ctx context.Context, groupKey string) (terminal, total int, err error) {
+	err = s.db.QueryRowContext(ctx, `
+		SELECT
+			COUNT(CASE WHEN state IN ('finished','failed','skipped','blocklisted') THEN 1 END),
+			COUNT(*)
+		FROM items WHERE group_key = ?`, groupKey).Scan(&terminal, &total)
+	return
+}
+
+// SourceProgress returns (terminal, total) counts for items sharing a source
+// (source_type + source_id).
+func (s *Store) SourceProgress(ctx context.Context, sourceType, sourceID string) (terminal, total int, err error) {
+	err = s.db.QueryRowContext(ctx, `
+		SELECT
+			COUNT(CASE WHEN state IN ('finished','failed','skipped','blocklisted') THEN 1 END),
+			COUNT(*)
+		FROM items WHERE source_type = ? AND source_id = ?`, sourceType, sourceID).Scan(&terminal, &total)
+	return
+}
+
 // FinishedItems returns all items whose state is finished or downloaded (i.e.
 // they have a file_path on disk). Used by `verify` and force-missing.
 func (s *Store) FinishedItems(ctx context.Context) ([]*Item, error) {

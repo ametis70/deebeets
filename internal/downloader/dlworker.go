@@ -16,6 +16,7 @@ import (
 func (p *Pipeline) downloadOne(ctx context.Context, item *store.Item) {
 	err := p.attemptDownload(ctx, item)
 	if err == nil {
+		p.logCompletion(ctx, item)
 		return
 	}
 	if deezer.IsRateLimited(err) {
@@ -31,8 +32,9 @@ func (p *Pipeline) downloadOne(ctx context.Context, item *store.Item) {
 			return
 		}
 		attempt++
-		p.log.Info("retrying download", "sng_id", item.SngID, "attempt", attempt)
+		p.log.Info("retrying download", "sng_id", item.SngID, "attempt", attempt, "cause", err)
 		if err = p.attemptDownload(ctx, item); err == nil {
+			p.logCompletion(ctx, item)
 			return
 		}
 		if deezer.IsRateLimited(err) {
@@ -55,6 +57,8 @@ func (p *Pipeline) onRateLimited(ctx context.Context, item *store.Item) {
 
 // attemptDownload performs one download attempt end to end.
 func (p *Pipeline) attemptDownload(ctx context.Context, item *store.Item) error {
+	p.log.Info("downloading", "sng_id", item.SngID, "title", item.Title, "artist", item.Artist)
+
 	// Fetch fresh track data: TRACK_TOKENs expire, so re-resolve at download time.
 	track, err := p.dz.GetTrack(ctx, item.SngID)
 	if err != nil {
@@ -94,10 +98,11 @@ func (p *Pipeline) attemptDownload(ctx context.Context, item *store.Item) error 
 	if err := p.store.MarkDownloaded(ctx, item.SngID, resolved.Format, rel); err != nil {
 		return err
 	}
+	p.log.Info("downloaded", "sng_id", item.SngID, "title", item.Title, "artist", item.Artist,
+		"format", resolved.Format, "path", rel)
 	if !p.importActive {
 		return p.store.MarkFinished(ctx, item.SngID)
 	}
-	p.log.Info("downloaded", "sng_id", item.SngID, "format", resolved.Format, "path", rel)
 	return nil
 }
 
@@ -114,6 +119,31 @@ func buildNameData(t *deezer.GWTrack, ext string) tagger.NameData {
 		MultiDisc:   disc > 1,
 		Ext:         ext,
 	}
+}
+
+// logCompletion checks whether the album or higher-level source (artist/playlist)
+// that item belongs to is fully processed and logs a summary if so.
+// SQLite's single-writer serialisation means only one goroutine will ever see
+// terminal==total for a given group, so there are no duplicate log lines.
+func (p *Pipeline) logCompletion(ctx context.Context, item *store.Item) {
+	if item.GroupKey == "" {
+		return
+	}
+	terminal, total, err := p.store.GroupProgress(ctx, item.GroupKey)
+	if err != nil || terminal < total {
+		return
+	}
+	p.log.Info("album complete", "album", item.Album, "artist", item.AlbumArtist, "tracks", total)
+
+	// For artist/playlist sources, check if the whole source is done too.
+	if item.SourceType != "artist" && item.SourceType != "playlist" {
+		return
+	}
+	sterminal, stotal, err := p.store.SourceProgress(ctx, item.SourceType, item.SourceID)
+	if err != nil || sterminal < stotal {
+		return
+	}
+	p.log.Info(item.SourceType+" complete", "source_id", item.SourceID, "tracks", stotal)
 }
 
 func (p *Pipeline) buildMetadata(ctx context.Context, t *deezer.GWTrack, format string) tagger.Metadata {
