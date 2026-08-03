@@ -15,6 +15,12 @@ music_dir = "./music"
 db_path = "./deebeets.db"
 socket_path = "./deebeets.sock"
 
+[sync]
+# How often the daemon automatically syncs your Deezer favorites.
+# Set to 0 to disable automatic syncing (use `deebeets sync` manually instead).
+# Examples: "1h", "6h", "24h"
+interval = "0s"
+
 [download]
 # Tracks downloaded in parallel (the "batch" size).
 concurrency = 3

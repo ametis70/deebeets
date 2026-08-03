@@ -83,6 +83,11 @@ func (d *Daemon) Run(parent context.Context) error {
 	d.log.Info("logged in to deezer", "user_id", d.dz.UserID(),
 		"lossless", d.dz.CanStreamLossless(), "hq", d.dz.CanStreamHQ())
 
+	if d.cfg.Sync.Interval > 0 {
+		d.log.Info("auto-sync enabled", "interval", d.cfg.Sync.Interval)
+		go d.pollSync(ctx)
+	}
+
 	if n, err := d.store.RecoverInterrupted(ctx); err != nil {
 		return err
 	} else if n > 0 {
@@ -126,6 +131,35 @@ func (d *Daemon) shutdown() error {
 func (d *Daemon) Close() {
 	if d.store != nil {
 		_ = d.store.Close()
+	}
+}
+
+// pollSync triggers a sync immediately then repeats on the configured interval.
+// It uses the daemon context so it stops cleanly on shutdown.
+func (d *Daemon) pollSync(ctx context.Context) {
+	d.triggerSync(ctx)
+	ticker := time.NewTicker(d.cfg.Sync.Interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			d.triggerSync(ctx)
+		}
+	}
+}
+
+// triggerSync fires a sync using the configured default favorite types,
+// re-using the single-flight logic already in Sync().
+func (d *Daemon) triggerSync(ctx context.Context) {
+	res, err := d.Sync(ctx, control.Selection{})
+	if err != nil {
+		d.log.Error("auto-sync failed", "err", err)
+		return
+	}
+	if !res.Started {
+		d.log.Debug("auto-sync skipped", "reason", res.Message)
 	}
 }
 

@@ -22,6 +22,7 @@ import (
 type Config struct {
 	Deezer    Deezer    `koanf:"deezer"`
 	Paths     Paths     `koanf:"paths"`
+	Sync      Sync      `koanf:"sync"`
 	Download  Download  `koanf:"download"`
 	Retry     Retry     `koanf:"retry"`
 	RateLimit RateLimit `koanf:"ratelimit"`
@@ -49,6 +50,12 @@ type Paths struct {
 	MusicDir   string `koanf:"music_dir"`
 	DBPath     string `koanf:"db_path"`
 	SocketPath string `koanf:"socket_path"`
+}
+
+// Sync controls automatic periodic syncing of favorites.
+type Sync struct {
+	// Interval between automatic syncs. Set to 0 to disable (manual sync only).
+	Interval time.Duration `koanf:"interval"`
 }
 
 // Favorites selects which favorite item types a sync pulls.
@@ -124,6 +131,8 @@ func Defaults() map[string]any {
 		"paths.music_dir":   "./music",
 		"paths.db_path":     "./deebeets.db",
 		"paths.socket_path": "./deebeets.sock",
+
+		"sync.interval": "0s",
 
 		"download.concurrency":       3,
 		"download.inter_batch_delay": "0s",
