@@ -31,7 +31,6 @@ func (g *rateGate) hit() (wait time.Duration, hardStop bool) {
 	defer g.mu.Unlock()
 
 	now := time.Now()
-	// Drop hits outside the sliding window.
 	cutoff := now.Add(-g.window)
 	kept := g.hits[:0]
 	for _, t := range g.hits {
@@ -42,7 +41,6 @@ func (g *rateGate) hit() (wait time.Duration, hardStop bool) {
 	g.hits = append(kept, now)
 
 	g.streak++
-	// Exponential backoff: cooldown * 2^(streak-1), capped at 32x.
 	mult := 1 << min(g.streak-1, 5)
 	wait = g.cooldown * time.Duration(mult)
 	g.openUntil = now.Add(wait)
@@ -71,17 +69,4 @@ func (g *rateGate) blockedFor() (time.Duration, bool) {
 		return d, false
 	}
 	return 0, false
-}
-
-// retryable reports whether another attempt should be made given the retry mode
-// and how many attempts have already happened.
-func shouldRetryImmediate(mode string, attempts, maxAttempts int) bool {
-	if mode != "immediate" && mode != "both" {
-		return false
-	}
-	return attempts < maxAttempts
-}
-
-func deferredEnabled(mode string) bool {
-	return mode == "deferred" || mode == "both"
 }

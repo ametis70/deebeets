@@ -3,6 +3,8 @@ package downloader
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 
@@ -11,55 +13,22 @@ import (
 	"deebeets/internal/tagger"
 )
 
-// downloadOne downloads a single track, applying the immediate-retry policy and
-// the rate-limit gate. Failures that survive retries are recorded as failed.
-func (p *Pipeline) downloadOne(ctx context.Context, item *store.Item) {
+// downloadOne attempts a single download of the given item. On success the item
+// is moved to state=downloaded. On failure the error is returned to the caller
+// (RunDownloads handles rate-limit vs regular failure classification).
+func (p *Pipeline) downloadOne(ctx context.Context, item *store.Item) error {
 	err := p.attemptDownload(ctx, item)
 	if err == nil {
 		p.logCompletion(ctx, item)
-		return
+		return nil
 	}
-	if deezer.IsRateLimited(err) {
-		p.onRateLimited(ctx, item)
-		return
-	}
-
-	// Immediate retries with backoff. Attempts already counts the initial claim.
-	attempt := item.Attempts
-	for shouldRetryImmediate(p.cfg.Retry.Mode, attempt, p.cfg.Retry.MaxAttempts) {
-		if !sleepCtx(ctx, p.cfg.Retry.Backoff) {
-			_ = p.store.SetState(ctx, item.SngID, store.StateQueued) // stopped mid-retry
-			return
-		}
-		attempt++
-		p.log.Info("retrying download", "sng_id", item.SngID, "attempt", attempt, "cause", err)
-		if err = p.attemptDownload(ctx, item); err == nil {
-			p.logCompletion(ctx, item)
-			return
-		}
-		if deezer.IsRateLimited(err) {
-			p.onRateLimited(ctx, item)
-			return
-		}
-	}
-
-	p.log.Error("download failed", "sng_id", item.SngID, "err", err)
-	_ = p.store.MarkFailed(ctx, item.SngID, store.StageDownload, err.Error())
-}
-
-// onRateLimited records a throttle event and returns the item to the queue so it
-// resumes once the cooldown elapses.
-func (p *Pipeline) onRateLimited(ctx context.Context, item *store.Item) {
-	wait, hard := p.gate.hit()
-	p.log.Warn("rate limited", "sng_id", item.SngID, "backoff", wait, "hard_stop", hard)
-	_ = p.store.SetState(ctx, item.SngID, store.StateQueued)
+	return err
 }
 
 // attemptDownload performs one download attempt end to end.
 func (p *Pipeline) attemptDownload(ctx context.Context, item *store.Item) error {
 	p.log.Info("downloading", "sng_id", item.SngID, "title", item.Title, "artist", item.Artist)
 
-	// Fetch fresh track data: TRACK_TOKENs expire, so re-resolve at download time.
 	track, err := p.dz.GetTrack(ctx, item.SngID)
 	if err != nil {
 		return fmt.Errorf("get track: %w", err)
@@ -76,7 +45,7 @@ func (p *Pipeline) attemptDownload(ctx context.Context, item *store.Item) error 
 	}
 	finalPath := filepath.Join(p.musicDir, rel)
 
-	tmp, err := p.streamToTemp(ctx, item, resolved.URL)
+	tmp, err := p.streamToTemp(ctx, item.SngID, resolved.URL)
 	if err != nil {
 		return fmt.Errorf("stream: %w", err)
 	}
@@ -89,14 +58,14 @@ func (p *Pipeline) attemptDownload(ctx context.Context, item *store.Item) error 
 
 	albumDir := filepath.Dir(finalPath)
 	if err := os.MkdirAll(albumDir, 0o755); err != nil {
+		_ = os.Remove(tmp)
 		return fmt.Errorf("mkdir: %w", err)
 	}
 	if err := os.Rename(tmp, finalPath); err != nil {
+		_ = os.Remove(tmp)
 		return fmt.Errorf("move into place: %w", err)
 	}
 
-	// Write cover.jpg alongside the tracks if not already present.
-	// Navidrome picks this up automatically for folder art.
 	if len(md.Cover) > 0 {
 		coverPath := filepath.Join(albumDir, "cover.jpg")
 		if _, err := os.Stat(coverPath); os.IsNotExist(err) {
@@ -110,12 +79,46 @@ func (p *Pipeline) attemptDownload(ctx context.Context, item *store.Item) error 
 	if err := p.store.MarkDownloaded(ctx, item.SngID, resolved.Format, rel); err != nil {
 		return err
 	}
-	p.log.Info("downloaded", "sng_id", item.SngID, "title", item.Title, "artist", item.Artist,
+	p.log.Info("downloaded", "sng_id", item.SngID, "title", item.Title,
 		"format", resolved.Format, "path", rel)
-	if !p.importActive {
-		return p.store.MarkFinished(ctx, item.SngID)
-	}
 	return nil
+}
+
+// streamToTemp downloads and decrypts a track into a temp file. If the context
+// is cancelled mid-stream, the partial file is deleted before returning.
+func (p *Pipeline) streamToTemp(ctx context.Context, sngID int64, url string) (string, error) {
+	if err := os.MkdirAll(p.incompleteDir, 0o755); err != nil {
+		return "", err
+	}
+	tmp := filepath.Join(p.incompleteDir, fmt.Sprintf("%d.part", sngID))
+
+	resp, err := p.dz.Download(ctx, url, 0)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("unexpected status %d", resp.StatusCode)
+	}
+
+	f, err := os.Create(tmp)
+	if err != nil {
+		return "", err
+	}
+
+	_, derr := deezer.DecryptTrack(f, resp.Body, sngID)
+	if cerr := f.Close(); cerr != nil && derr == nil {
+		derr = cerr
+	}
+	if derr != nil {
+		_ = os.Remove(tmp)
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		return "", derr
+	}
+	return tmp, nil
 }
 
 func buildNameData(t *deezer.GWTrack, ext string) tagger.NameData {
@@ -133,10 +136,6 @@ func buildNameData(t *deezer.GWTrack, ext string) tagger.NameData {
 	}
 }
 
-// logCompletion checks whether the album or higher-level source (artist/playlist)
-// that item belongs to is fully processed and logs a summary if so.
-// SQLite's single-writer serialisation means only one goroutine will ever see
-// terminal==total for a given group, so there are no duplicate log lines.
 func (p *Pipeline) logCompletion(ctx context.Context, item *store.Item) {
 	if item.GroupKey == "" {
 		return
@@ -147,7 +146,6 @@ func (p *Pipeline) logCompletion(ctx context.Context, item *store.Item) {
 	}
 	p.log.Info("album complete", "album", item.Album, "artist", item.AlbumArtist, "tracks", total)
 
-	// For artist/playlist sources, check if the whole source is done too.
 	if item.SourceType != "artist" && item.SourceType != "playlist" {
 		return
 	}
@@ -178,4 +176,11 @@ func (p *Pipeline) buildMetadata(ctx context.Context, t *deezer.GWTrack, format 
 		}
 	}
 	return md
+}
+
+// discardBody drains and discards an http response body.
+func discardBody(r *http.Response) {
+	if r != nil {
+		_, _ = io.Copy(io.Discard, r.Body)
+	}
 }
