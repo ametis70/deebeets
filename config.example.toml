@@ -11,41 +11,54 @@ arl = ""
 format_priority = ["FLAC", "MP3_320", "MP3_128"]
 
 [paths]
-music_dir = "./music"
-db_path = "./deebeets.db"
+music_dir   = "./music"
+db_path     = "./deebeets.db"
 socket_path = "./deebeets.sock"
 
 [sync]
 # How often the daemon automatically syncs your Deezer favorites.
-# Set to 0 to disable automatic syncing (use `deebeets sync` manually instead).
+# Set to 0 to disable automatic syncing (use `deebeets sync start` manually).
 # Examples: "1h", "6h", "24h"
 interval = "0s"
 
+[sync.retry]
+max_attempts = 3
+backoff      = "10s"
+
 [download]
-# Tracks downloaded in parallel (the "batch" size).
-concurrency = 3
+# Tracks downloaded in parallel within a batch.
+concurrency       = 3
 # Optional pause between batches, e.g. "2s". "0s" disables it.
 inter_batch_delay = "0s"
+# Automatically start downloading after each sync completes.
+auto = false
 
 [download.favorites]
-# Default item types pulled by `deebeets sync` when no flags are given.
-albums = false
-artists = false
+# Default item types pulled by `deebeets sync start` when no flags are given.
+albums    = false
+artists   = false
 playlists = false
-tracks = true
+tracks    = true
 
-[retry]
-# immediate | deferred | both
-mode = "both"
+[download.retry]
+# Batch-level retries: after all queued items are processed, failed items are
+# requeued up to max_attempts times before being permanently marked failed.
 max_attempts = 3
-backoff = "5s"
+backoff      = "5s"
+
+[import]
+# Automatically run `beet import` against the full music_dir after each
+# download run completes.
+auto = false
 
 [ratelimit]
-# Base backoff after a rate-limit hit (grows exponentially).
+# Base backoff after a rate-limit hit (grows exponentially per hit).
 cooldown = "30s"
 # max_hits within window triggers a hard stop of the download stage.
 max_hits = 5
-window = "5m"
+window   = "5m"
+# Flat halt duration applied to all stages when a rate limit is hit.
+backoff  = "10m"
 
 [tags]
 # Baseline tags deebeets writes before beets runs. beets remains canonical.
@@ -61,11 +74,11 @@ fields = [
 naming_template = "{{.AlbumArtist}}/{{.Album}}{{if .Year}} ({{.Year}}){{end}}/{{if .MultiDisc}}{{.Disc}}-{{end}}{{printf \"%02d\" .Track}} {{.Title}}.{{.Ext}}"
 
 [beets]
-enabled = false
-binary = "beet"
+enabled     = false
+binary      = "beet"
 # Path to a beets config; empty uses beets' own default.
 config_path = ""
-args = ["import", "-q"]
+args        = ["import", "-q"]
 # Keep at 1 to serialize beets and avoid library-db lock contention.
 concurrency = 1
 

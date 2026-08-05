@@ -1,0 +1,60 @@
+# deebeets config for the Docker Compose E2E stack.
+# Paths are pinned to the container volume mounts defined in docker-compose.yml.
+
+[deezer]
+arl = ""  # overridden by DEEBEETS_ARL env var at runtime
+format_priority = ["FLAC", "MP3_320", "MP3_128"]
+
+[paths]
+music_dir   = "/music"
+db_path     = "/config/deebeets.db"
+socket_path = "/config/deebeets.sock"
+
+[sync]
+interval = "0s"
+
+[sync.retry]
+max_attempts = 3
+backoff      = "10s"
+
+[download]
+concurrency       = 3
+inter_batch_delay = "0s"
+auto              = true
+
+[download.favorites]
+albums    = false
+artists   = false
+playlists = false
+tracks    = true
+
+[download.retry]
+max_attempts = 3
+backoff      = "5s"
+
+[import]
+auto = true
+
+[ratelimit]
+cooldown = "30s"
+max_hits = 5
+window   = "5m"
+backoff  = "10m"
+
+[tags]
+fields = [
+  "title", "artist", "albumartist", "album",
+  "tracknumber", "totaltracks", "discnumber", "disctotal",
+  "date", "genre", "composer", "isrc", "barcode",
+  "copyright", "bpm", "replaygain", "comment", "lyrics", "cover",
+]
+naming_template = "{{.AlbumArtist}}/{{.Album}}{{if .Year}} ({{.Year}}){{end}}/{{if .MultiDisc}}{{.Disc}}-{{end}}{{printf \"%02d\" .Track}} {{.Title}}.{{.Ext}}"
+
+[beets]
+enabled     = true
+binary      = "beet"
+config_path = "/config/beets.yaml"
+args        = ["import", "-q"]
+concurrency = 1
+
+posthooks = []

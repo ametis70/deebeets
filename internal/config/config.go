@@ -10,12 +10,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-viper/mapstructure/v2"
 	"github.com/knadh/koanf/parsers/toml"
 	"github.com/knadh/koanf/providers/confmap"
 	"github.com/knadh/koanf/providers/env"
 	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/v2"
-	"github.com/go-viper/mapstructure/v2"
 )
 
 // Config is the fully-resolved application configuration.
@@ -24,7 +24,7 @@ type Config struct {
 	Paths     Paths     `koanf:"paths"`
 	Sync      Sync      `koanf:"sync"`
 	Download  Download  `koanf:"download"`
-	Retry     Retry     `koanf:"retry"`
+	Import    Import    `koanf:"import"`
 	RateLimit RateLimit `koanf:"ratelimit"`
 	Tags      Tags      `koanf:"tags"`
 	Beets     Beets     `koanf:"beets"`
@@ -32,16 +32,13 @@ type Config struct {
 
 	// FixtureAlbums is populated from DEEBEETS_FIXTURE_ALBUMS (comma-separated
 	// album IDs). When set the daemon's sync uses this list instead of fetching
-	// real Deezer favorites, exercising the full pipeline on a controlled set.
+	// real Deezer favorites, exercising the full pipeline on a fixed set.
 	FixtureAlbums []int64 `koanf:"-"`
 }
 
 // Deezer holds credentials and format preferences.
 type Deezer struct {
-	// ARL is the Deezer auth cookie. Prefer the DEEBEETS_ARL env var over
-	// storing it in the config file.
-	ARL string `koanf:"arl"`
-	// FormatPriority is tried in order; the first the account/track can serve wins.
+	ARL            string   `koanf:"arl"`
 	FormatPriority []string `koanf:"format_priority"`
 }
 
@@ -52,10 +49,17 @@ type Paths struct {
 	SocketPath string `koanf:"socket_path"`
 }
 
+// RetryPolicy is a reusable retry configuration block.
+type RetryPolicy struct {
+	MaxAttempts int           `koanf:"max_attempts"`
+	Backoff     time.Duration `koanf:"backoff"`
+}
+
 // Sync controls automatic periodic syncing of favorites.
 type Sync struct {
-	// Interval between automatic syncs. Set to 0 to disable (manual sync only).
+	// Interval between automatic syncs. Set to 0 to disable.
 	Interval time.Duration `koanf:"interval"`
+	Retry    RetryPolicy   `koanf:"retry"`
 }
 
 // Favorites selects which favorite item types a sync pulls.
@@ -68,37 +72,35 @@ type Favorites struct {
 
 // Download controls the batched download stage.
 type Download struct {
-	// Concurrency is the number of tracks downloaded in parallel (the "batch").
-	Concurrency int `koanf:"concurrency"`
-	// InterBatchDelay is an optional pause between batches.
+	Concurrency     int           `koanf:"concurrency"`
 	InterBatchDelay time.Duration `koanf:"inter_batch_delay"`
-	// Favorites picks the default item types for `sync` when no flags are given.
+	// Auto triggers the download stage automatically after each sync.
+	Auto      bool      `koanf:"auto"`
 	Favorites Favorites `koanf:"favorites"`
+	Retry     RetryPolicy `koanf:"retry"`
 }
 
-// Retry controls failed-download retry behaviour.
-type Retry struct {
-	// Mode is one of: immediate, deferred, both.
-	Mode        string        `koanf:"mode"`
-	MaxAttempts int           `koanf:"max_attempts"`
-	Backoff     time.Duration `koanf:"backoff"`
+// Import controls the post-download import stage.
+type Import struct {
+	// Auto triggers beet import against the full music_dir after each download run.
+	Auto bool `koanf:"auto"`
 }
 
-// RateLimit controls how aggressively the downloader backs off to avoid a ban.
+// RateLimit controls how the downloader backs off to avoid a ban.
 type RateLimit struct {
 	// Cooldown is the base backoff after a rate-limit hit (grows exponentially).
 	Cooldown time.Duration `koanf:"cooldown"`
-	// MaxHits within Window triggers a hard stop of the download stage.
+	// MaxHits within Window trips a hard stop of the download stage.
 	MaxHits int           `koanf:"max_hits"`
 	Window  time.Duration `koanf:"window"`
+	// Backoff is the flat wait duration applied to all stages when rate limited.
+	Backoff time.Duration `koanf:"backoff"`
 }
 
 // Tags controls baseline tagging and file naming.
 type Tags struct {
-	// Fields is the set of tags deebeets writes before beets runs.
-	Fields []string `koanf:"fields"`
-	// NamingTemplate is a Go text/template producing the relative file path.
-	NamingTemplate string `koanf:"naming_template"`
+	Fields         []string `koanf:"fields"`
+	NamingTemplate string   `koanf:"naming_template"`
 }
 
 // Beets controls the optional beets import stage.
@@ -107,22 +109,16 @@ type Beets struct {
 	Binary     string   `koanf:"binary"`
 	ConfigPath string   `koanf:"config_path"`
 	Args       []string `koanf:"args"`
-	// Concurrency for the import queue; keep at 1 to serialize beets safely.
-	Concurrency int `koanf:"concurrency"`
+	Concurrency int     `koanf:"concurrency"`
 }
 
 const (
-	// EnvPrefix is the prefix for environment overrides, e.g. DEEBEETS_DOWNLOAD_CONCURRENCY.
-	EnvPrefix = "DEEBEETS_"
-	// EnvARL is a dedicated override for the sensitive ARL value.
-	EnvARL = "DEEBEETS_ARL"
-	// EnvFixtureAlbums is a comma-separated list of album IDs used to run the
-	// full pipeline against a fixed set instead of real Deezer favorites.
+	EnvPrefix       = "DEEBEETS_"
+	EnvARL          = "DEEBEETS_ARL"
 	EnvFixtureAlbums = "DEEBEETS_FIXTURE_ALBUMS"
 )
 
-// Defaults returns the built-in configuration, tuned to work out-of-the-box
-// with Navidrome's default library conventions.
+// Defaults returns the built-in configuration.
 func Defaults() map[string]any {
 	return map[string]any{
 		"deezer.arl":             "",
@@ -132,22 +128,26 @@ func Defaults() map[string]any {
 		"paths.db_path":     "./deebeets.db",
 		"paths.socket_path": "./deebeets.sock",
 
-		"sync.interval": "0s",
+		"sync.interval":            "0s",
+		"sync.retry.max_attempts":  3,
+		"sync.retry.backoff":       "10s",
 
-		"download.concurrency":       3,
-		"download.inter_batch_delay": "0s",
-		"download.favorites.albums":    false,
-		"download.favorites.artists":   false,
-		"download.favorites.playlists": false,
-		"download.favorites.tracks":    true,
+		"download.concurrency":          3,
+		"download.inter_batch_delay":    "0s",
+		"download.auto":                 false,
+		"download.favorites.albums":     false,
+		"download.favorites.artists":    false,
+		"download.favorites.playlists":  false,
+		"download.favorites.tracks":     true,
+		"download.retry.max_attempts":   3,
+		"download.retry.backoff":        "5s",
 
-		"retry.mode":         "both",
-		"retry.max_attempts": 3,
-		"retry.backoff":      "5s",
+		"import.auto": false,
 
 		"ratelimit.cooldown": "30s",
 		"ratelimit.max_hits": 5,
 		"ratelimit.window":   "5m",
+		"ratelimit.backoff":  "10m",
 
 		"tags.fields": []string{
 			"title", "artist", "albumartist", "album",
@@ -157,19 +157,18 @@ func Defaults() map[string]any {
 		},
 		"tags.naming_template": `{{.AlbumArtist}}/{{.Album}}{{if .Year}} ({{.Year}}){{end}}/{{if .MultiDisc}}{{.Disc}}-{{end}}{{printf "%02d" .Track}} {{.Title}}.{{.Ext}}`,
 
-		"beets.enabled":     false,
-		"beets.binary":      "beet",
-		"beets.config_path": "",
-		"beets.args":        []string{"import", "-q"},
-		"beets.concurrency": 1,
+		"beets.enabled":      false,
+		"beets.binary":       "beet",
+		"beets.config_path":  "",
+		"beets.args":         []string{"import", "-q"},
+		"beets.concurrency":  1,
 
 		"posthooks": []string{},
 	}
 }
 
 // Load resolves configuration from defaults, then the TOML file at path (if it
-// exists), then environment variables. The dedicated DEEBEETS_ARL var wins over
-// everything for the ARL.
+// exists), then environment variables.
 func Load(path string) (*Config, error) {
 	k := koanf.New(".")
 
@@ -207,9 +206,6 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
 	}
 
-	// DEEBEETS_ARL is a first-class override so the secret can stay out of files.
-	// (The generic env loader above maps DEEBEETS_ARL -> "arl", not "deezer.arl",
-	// so handle it explicitly here.)
 	if arl := os.Getenv(EnvARL); arl != "" {
 		cfg.Deezer.ARL = arl
 	}
@@ -255,11 +251,6 @@ func (c *Config) Validate() error {
 		if !validFormat(f) {
 			return fmt.Errorf("deezer.format_priority: unknown format %q", f)
 		}
-	}
-	switch c.Retry.Mode {
-	case "immediate", "deferred", "both":
-	default:
-		return fmt.Errorf("retry.mode must be one of immediate|deferred|both, got %q", c.Retry.Mode)
 	}
 	if c.Beets.Concurrency < 1 {
 		return fmt.Errorf("beets.concurrency must be >= 1")
