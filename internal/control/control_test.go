@@ -11,42 +11,43 @@ import (
 
 // fakeController records calls and returns canned data.
 type fakeController struct {
-	started      bool
-	stopped      bool
+	syncStarted  bool
+	syncStopped  bool
+	dlStarted    bool
+	dlStopped    bool
 	lastKind     string
 	lastIDs      []int64
 	lastMode     string
 	blocked      []store.Block
 	syncSel      Selection
-	importedPath string
+	importCalled bool
 }
 
 func (f *fakeController) Status(context.Context) (StatusResponse, error) {
-	return StatusResponse{DownloadRunning: true, DownloadStatus: "running",
-		Counts: map[string]int{"finished": 3, "queued": 2}}, nil
+	return StatusResponse{Stage: "idle", Counts: map[string]int{"finished": 3, "queued": 2}}, nil
 }
-func (f *fakeController) Sync(_ context.Context, sel Selection) (SyncStarted, error) {
-	f.syncSel = sel
-	return SyncStarted{Started: true, Message: "sync started"}, nil
+func (f *fakeController) SyncStart(_ context.Context, sel Selection) error {
+	f.syncStarted, f.syncSel = true, sel
+	return nil
 }
-func (f *fakeController) Download(_ context.Context, kind string, ids []int64) (int, error) {
-	f.lastKind, f.lastIDs = kind, ids
-	return len(ids), nil
+func (f *fakeController) SyncStop(context.Context) error { f.syncStopped = true; return nil }
+func (f *fakeController) DownloadStart(_ context.Context, kind string, ids []int64) error {
+	f.dlStarted, f.lastKind, f.lastIDs = true, kind, ids
+	return nil
 }
+func (f *fakeController) DownloadStop(context.Context) error { f.dlStopped = true; return nil }
 func (f *fakeController) Redownload(_ context.Context, mode string, ids []int64) (int, error) {
 	f.lastMode, f.lastIDs = mode, ids
 	return 7, nil
 }
-func (f *fakeController) StartDownload(context.Context) error { f.started = true; return nil }
-func (f *fakeController) StopDownload(context.Context) error  { f.stopped = true; return nil }
 func (f *fakeController) BlocklistAdd(_ context.Context, kind string, ids []int64, reason string) error {
 	f.blocked = append(f.blocked, store.Block{Kind: kind, ExtID: ids[0], Reason: reason})
 	return nil
 }
 func (f *fakeController) BlocklistRemove(context.Context, string, []int64) error { return nil }
 func (f *fakeController) BlocklistList(context.Context) ([]store.Block, error)   { return f.blocked, nil }
-func (f *fakeController) BeetsImport(_ context.Context, path string) error {
-	f.importedPath = path
+func (f *fakeController) BeetsImport(context.Context) error {
+	f.importCalled = true
 	return nil
 }
 func (f *fakeController) Items(context.Context, []string, int) ([]store.Item, error) {
@@ -65,7 +66,6 @@ func startServer(t *testing.T) (*Client, *fakeController) {
 	t.Cleanup(func() { srv.Close(context.Background()) })
 
 	c := NewClient(sock)
-	// Wait for the socket to accept connections.
 	for i := 0; i < 50 && !c.Available(); i++ {
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -80,36 +80,44 @@ func TestControlRoundTrip(t *testing.T) {
 	c, fc := startServer(t)
 
 	st, err := c.Status(ctx)
-	if err != nil || !st.DownloadRunning || st.Counts["finished"] != 3 {
+	if err != nil || st.Stage != "idle" || st.Counts["finished"] != 3 {
 		t.Fatalf("status = %+v err=%v", st, err)
 	}
 
-	if s, err := c.Sync(ctx, Selection{Tracks: true}); err != nil || !s.Started {
-		t.Fatalf("sync = %+v err=%v", s, err)
+	if err := c.SyncStart(ctx, Selection{Tracks: true}); err != nil {
+		t.Fatalf("sync start err=%v", err)
 	}
-	if !fc.syncSel.Tracks {
-		t.Fatal("server did not receive selection")
-	}
-
-	if n, err := c.Download(ctx, "album", []int64{10, 11}); err != nil || n != 2 {
-		t.Fatalf("download n=%d err=%v", n, err)
-	}
-	if fc.lastKind != "album" || len(fc.lastIDs) != 2 {
-		t.Fatalf("download not forwarded: %s %v", fc.lastKind, fc.lastIDs)
+	if !fc.syncStarted || !fc.syncSel.Tracks {
+		t.Fatal("sync start not forwarded")
 	}
 
-	if n, err := c.Redownload(ctx, "missing", nil); err != nil || n != 7 {
+	if err := c.SyncStop(ctx); err != nil {
+		t.Fatalf("sync stop err=%v", err)
+	}
+	if !fc.syncStopped {
+		t.Fatal("sync stop not forwarded")
+	}
+
+	if err := c.DownloadStart(ctx, "album", []int64{10, 11}); err != nil {
+		t.Fatalf("download start err=%v", err)
+	}
+	if !fc.dlStarted || fc.lastKind != "album" || len(fc.lastIDs) != 2 {
+		t.Fatalf("download start not forwarded: started=%v kind=%s ids=%v",
+			fc.dlStarted, fc.lastKind, fc.lastIDs)
+	}
+
+	if err := c.DownloadStop(ctx); err != nil {
+		t.Fatalf("download stop err=%v", err)
+	}
+	if !fc.dlStopped {
+		t.Fatal("download stop not forwarded")
+	}
+
+	if n, err := c.Redownload(ctx, "failed", nil); err != nil || n != 7 {
 		t.Fatalf("redownload n=%d err=%v", n, err)
 	}
-	if fc.lastMode != "missing" {
+	if fc.lastMode != "failed" {
 		t.Fatalf("redownload mode = %s", fc.lastMode)
-	}
-
-	if err := c.Start(ctx); err != nil || !fc.started {
-		t.Fatalf("start err=%v started=%v", err, fc.started)
-	}
-	if err := c.Stop(ctx); err != nil || !fc.stopped {
-		t.Fatalf("stop err=%v stopped=%v", err, fc.stopped)
 	}
 
 	if err := c.BlocklistAdd(ctx, "track", []int64{99}, "nope"); err != nil {
@@ -120,8 +128,8 @@ func TestControlRoundTrip(t *testing.T) {
 		t.Fatalf("blocklist = %+v err=%v", blocks, err)
 	}
 
-	if err := c.BeetsImport(ctx, "/music/x"); err != nil || fc.importedPath != "/music/x" {
-		t.Fatalf("beets import err=%v path=%q", err, fc.importedPath)
+	if err := c.BeetsImport(ctx); err != nil || !fc.importCalled {
+		t.Fatalf("beets import err=%v called=%v", err, fc.importCalled)
 	}
 
 	items, err := c.Items(ctx, []string{"finished"})

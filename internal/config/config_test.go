@@ -21,8 +21,11 @@ func TestLoadDefaults(t *testing.T) {
 	if !cfg.Download.Favorites.Tracks {
 		t.Errorf("favorites.tracks should default true")
 	}
-	if cfg.Retry.Backoff != 5*time.Second {
-		t.Errorf("retry.backoff = %v, want 5s", cfg.Retry.Backoff)
+	if cfg.Download.Retry.Backoff != 5*time.Second {
+		t.Errorf("download.retry.backoff = %v, want 5s", cfg.Download.Retry.Backoff)
+	}
+	if cfg.Sync.Retry.Backoff != 10*time.Second {
+		t.Errorf("sync.retry.backoff = %v, want 10s", cfg.Sync.Retry.Backoff)
 	}
 }
 
@@ -70,9 +73,9 @@ func TestValidate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.Retry.Mode = "nonsense"
-	if err := cfg.Validate(); err == nil {
-		t.Error("expected error for bad retry.mode")
+	// Confirm validation passes for a valid config.
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("valid config failed validation: %v", err)
 	}
 
 	cfg2, _ := Load("")

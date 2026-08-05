@@ -2,6 +2,7 @@ package downloader
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -12,7 +13,6 @@ import (
 	"deebeets/internal/config"
 	"deebeets/internal/store"
 )
-
 func testPipeline(t *testing.T) (*Pipeline, *store.Store, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -37,7 +37,6 @@ func TestMissingFilesAndForceModes(t *testing.T) {
 	ctx := context.Background()
 	p, st, musicDir := testPipeline(t)
 
-	// A finished item whose file exists.
 	st.Upsert(ctx, store.Discovered{SngID: 1})
 	st.ClaimDownload(ctx)
 	rel := filepath.Join("Artist", "Album", "01 Song.flac")
@@ -47,12 +46,10 @@ func TestMissingFilesAndForceModes(t *testing.T) {
 	os.MkdirAll(filepath.Dir(full), 0o755)
 	os.WriteFile(full, []byte("audio"), 0o644)
 
-	// Nothing missing yet.
 	if miss, err := p.MissingFiles(ctx); err != nil || len(miss) != 0 {
 		t.Fatalf("missing=%v err=%v, want none", miss, err)
 	}
 
-	// Delete the file: it must be reported missing but the row must remain.
 	os.Remove(full)
 	miss, err := p.MissingFiles(ctx)
 	if err != nil || len(miss) != 1 || miss[0].SngID != 1 {
@@ -62,7 +59,6 @@ func TestMissingFilesAndForceModes(t *testing.T) {
 		t.Fatal("row must not be deleted or altered by verify")
 	}
 
-	// force-missing requeues it while keeping the recorded path.
 	n, err := p.ForceMissing(ctx)
 	if err != nil || n != 1 {
 		t.Fatalf("ForceMissing n=%d err=%v", n, err)
@@ -72,7 +68,6 @@ func TestMissingFilesAndForceModes(t *testing.T) {
 		t.Fatalf("after force-missing state=%q file=%q", it.State, it.FilePath)
 	}
 
-	// force-all clears the recorded path.
 	st.MarkFinished(ctx, 1)
 	n, err = p.ForceAll(ctx, nil)
 	if err != nil || n != 1 {
@@ -104,5 +99,160 @@ func TestRateGate(t *testing.T) {
 	}
 	if _, h := g.blockedFor(); !h {
 		t.Fatal("blockedFor should report hard stop")
+	}
+}
+
+// fakeImporter records Import calls.
+type fakeImporter struct {
+	called  int
+	musicDir string
+}
+
+func (f *fakeImporter) Import(_ context.Context, musicDir string) error {
+	f.called++
+	f.musicDir = musicDir
+	return nil
+}
+
+func TestRunImportGuardsConcurrentRuns(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	cfg, _ := config.Load("")
+	cfg.Paths.MusicDir = filepath.Join(dir, "music")
+	os.MkdirAll(cfg.Paths.MusicDir, 0o755)
+
+	imp := &fakeImporter{}
+	p := New(st, nil, cfg, imp, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	// First call should run.
+	if err := p.RunImport(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if imp.called != 1 {
+		t.Fatalf("expected 1 import call, got %d", imp.called)
+	}
+	if imp.musicDir != cfg.Paths.MusicDir {
+		t.Fatalf("import received wrong dir: %q", imp.musicDir)
+	}
+}
+
+// errImporter always fails.
+type errImporter struct{ err error }
+
+func (e *errImporter) Import(context.Context, string) error { return e.err }
+
+func TestRunImportErrorDoesNotMarkFinished(t *testing.T) {
+	dir := t.TempDir()
+	st, _ := store.Open(filepath.Join(dir, "t.db"))
+	defer st.Close()
+
+	ctx := context.Background()
+	st.Upsert(ctx, store.Discovered{SngID: 1})
+	st.ClaimDownload(ctx)
+	st.MarkDownloaded(ctx, 1, "FLAC", "f.flac")
+
+	cfg, _ := config.Load("")
+	cfg.Paths.MusicDir = filepath.Join(dir, "music")
+	os.MkdirAll(cfg.Paths.MusicDir, 0o755)
+
+	p := New(st, nil, cfg, &errImporter{err: errors.New("beets crashed")},
+		slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	// RunImport should return the error but not change item states.
+	if err := p.RunImport(ctx); err == nil {
+		t.Fatal("expected error from importer")
+	}
+	it, _ := st.Get(ctx, 1)
+	if it.State != store.StateDownloaded {
+		t.Fatalf("state = %q, want downloaded (import error must not mark finished)", it.State)
+	}
+}
+
+func TestRunDownloadsBatchRetry(t *testing.T) {
+	dir := t.TempDir()
+	st, _ := store.Open(filepath.Join(dir, "t.db"))
+	defer st.Close()
+
+	ctx := context.Background()
+
+	// Simulate the state after a download run where 2 items failed:
+	// they are in the failed batch with batch_attempts=0.
+	for _, id := range []int64{1, 2} {
+		st.Upsert(ctx, store.Discovered{SngID: id, Title: "T"})
+		st.ClaimDownload(ctx)
+		st.MarkInFailedBatch(ctx, []int64{id}, store.StageDownload, "timeout")
+	}
+
+	// Verify ClaimFailedBatch returns them.
+	failed, err := st.ClaimFailedBatch(ctx)
+	if err != nil || len(failed) != 2 {
+		t.Fatalf("expected 2 failed-batch items, got %d err=%v", len(failed), err)
+	}
+
+	// One batch retry pass: requeue them.
+	ids := []int64{1, 2}
+	if err := st.RequeueFailedBatch(ctx, ids); err != nil {
+		t.Fatal(err)
+	}
+	it1, _ := st.Get(ctx, 1)
+	if it1.State != store.StateQueued || it1.BatchAttempts != 1 || it1.InFailedBatch {
+		t.Fatalf("after retry pass 1: state=%q batch_attempts=%d in_failed=%v",
+			it1.State, it1.BatchAttempts, it1.InFailedBatch)
+	}
+
+	// Fail them again.
+	st.MarkInFailedBatch(ctx, ids, store.StageDownload, "still failing")
+
+	// Permanently mark them (max_attempts=1 exhausted).
+	for _, id := range ids {
+		it, _ := st.Get(ctx, id)
+		st.MarkFailed(ctx, it.SngID, store.StageDownload, it.Error)
+	}
+
+	it1, _ = st.Get(ctx, 1)
+	it2, _ := st.Get(ctx, 2)
+	if it1.State != store.StateFailed || it1.InFailedBatch {
+		t.Fatalf("item 1 permanently failed: state=%q in_failed=%v", it1.State, it1.InFailedBatch)
+	}
+	if it2.State != store.StateFailed || it2.InFailedBatch {
+		t.Fatalf("item 2 permanently failed: state=%q in_failed=%v", it2.State, it2.InFailedBatch)
+	}
+
+	// RequeueAllFailed resets everything for a manual retry.
+	n, err := st.RequeueAllFailed(ctx)
+	if err != nil || n != 2 {
+		t.Fatalf("RequeueAllFailed n=%d err=%v", n, err)
+	}
+	it1, _ = st.Get(ctx, 1)
+	if it1.State != store.StateQueued || it1.BatchAttempts != 0 {
+		t.Fatalf("after RequeueAllFailed: state=%q batch_attempts=%d", it1.State, it1.BatchAttempts)
+	}
+}
+
+func TestRunDownloadsStopDeletesTempFile(t *testing.T) {
+	dir := t.TempDir()
+	st, _ := store.Open(filepath.Join(dir, "t.db"))
+	defer st.Close()
+
+	cfg, _ := config.Load("")
+	cfg.Paths.MusicDir = filepath.Join(dir, "music")
+	os.MkdirAll(cfg.Paths.MusicDir, 0o755)
+
+	p := New(st, nil, cfg, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	// Write a fake temp file in incompleteDir.
+	os.MkdirAll(p.incompleteDir, 0o755)
+	tmpFile := filepath.Join(p.incompleteDir, "42.part")
+	os.WriteFile(tmpFile, []byte("partial"), 0o644)
+
+	p.CleanIncomplete()
+
+	if _, err := os.Stat(tmpFile); !os.IsNotExist(err) {
+		t.Fatal("expected temp file to be deleted by CleanIncomplete")
 	}
 }

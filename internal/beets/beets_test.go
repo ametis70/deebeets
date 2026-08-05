@@ -17,20 +17,20 @@ func TestPostHooksRunWithEnv(t *testing.T) {
 
 	r := NewRunner(
 		config.Beets{Enabled: false}, // beets off, hooks still run
-		[]string{"printf '%s' \"$DEEBEETS_ALBUM_DIR\" > " + marker},
+		[]string{"printf '%s' \"$DEEBEETS_MUSIC_DIR\" > " + marker},
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
 
-	albumDir := filepath.Join(dir, "Artist", "Album")
-	if err := r.Import(context.Background(), albumDir, []string{albumDir + "/01.flac"}); err != nil {
+	musicDir := filepath.Join(dir, "music")
+	if err := r.Import(context.Background(), musicDir); err != nil {
 		t.Fatalf("Import: %v", err)
 	}
 	got, err := os.ReadFile(marker)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != albumDir {
-		t.Fatalf("hook saw album dir %q, want %q", got, albumDir)
+	if string(got) != musicDir {
+		t.Fatalf("hook saw music dir %q, want %q", got, musicDir)
 	}
 }
 
@@ -40,7 +40,7 @@ func TestBeetsBinaryErrorSurfaces(t *testing.T) {
 		nil,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
-	if err := r.Import(context.Background(), "/tmp/x", nil); err == nil {
+	if err := r.Import(context.Background(), "/tmp/x"); err == nil {
 		t.Fatal("expected error when beets binary is missing")
 	}
 }
