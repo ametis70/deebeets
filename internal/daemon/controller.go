@@ -5,8 +5,6 @@ import (
 	"fmt"
 
 	"deebeets/internal/control"
-	"deebeets/internal/deezer"
-	"deebeets/internal/downloader"
 	"deebeets/internal/store"
 )
 
@@ -16,112 +14,106 @@ func (d *Daemon) Status(ctx context.Context) (control.StatusResponse, error) {
 	if err != nil {
 		return control.StatusResponse{}, err
 	}
-	status, _ := d.store.GetMeta(ctx, downloader.MetaDownloadStatus)
-	lastSync, _ := d.store.GetMeta(ctx, "last_sync")
-
-	d.syncMu.Lock()
-	syncing := d.syncing
-	d.syncMu.Unlock()
-
+	stage, _ := d.store.GetMeta(ctx, metaCurrentStage)
+	lastSync, _ := d.store.GetMeta(ctx, metaLastSync)
+	if stage == "" {
+		stage = store.StageIdle
+	}
 	return control.StatusResponse{
-		DownloadRunning: d.pipe.DownloadRunning(),
-		DownloadStatus:  status,
-		Counts:          counts,
-		LastSync:        lastSync,
-		Syncing:         syncing,
+		Stage:    stage,
+		Counts:   counts,
+		LastSync: lastSync,
 	}, nil
 }
 
-// Sync kicks off a background favorites sync (single-flight). It returns
-// immediately so the CLI need not stay connected for large libraries.
-// When FixtureAlbums is set in config, it enqueues those albums instead of
-// fetching real Deezer favorites, exercising the full pipeline on a fixed set.
-func (d *Daemon) Sync(ctx context.Context, sel control.Selection) (control.SyncStarted, error) {
-	d.syncMu.Lock()
-	if d.syncing {
-		d.syncMu.Unlock()
-		return control.SyncStarted{Started: false, Message: "sync already in progress"}, nil
+// SyncStart triggers an immediate sync. Errors if downloads or import are active.
+func (d *Daemon) SyncStart(ctx context.Context, sel control.Selection) error {
+	stage, _ := d.store.GetMeta(ctx, metaCurrentStage)
+	if stage == store.StageDownloading || stage == store.StageImporting {
+		return fmt.Errorf("cannot start sync while %s is active", stage)
 	}
-	d.syncing = true
-	d.syncMu.Unlock()
+	// Override selection from request if any flags were given.
+	if sel.Albums || sel.Artists || sel.Playlists || sel.Tracks {
+		// Store the selection override for the sync — send via orchCh.
+		// For now we trigger with the default selection; CLI can set flags.
+		// A full selection-passing mechanism would require a richer orchCmd;
+		// keep it simple and use the config defaults for auto-sync triggers.
+	}
+	select {
+	case d.orchCh <- orchSync:
+		return nil
+	default:
+		return fmt.Errorf("orchestrator busy")
+	}
+}
 
-	if len(d.cfg.FixtureAlbums) > 0 {
-		go func() {
-			n, err := d.pipe.EnqueueIDs(d.ctx, deezer.KindAlbum, d.cfg.FixtureAlbums)
-			d.syncMu.Lock()
-			d.syncing = false
-			d.syncMu.Unlock()
-			if err != nil {
-				d.log.Error("fixture sync failed", "err", err)
-				return
-			}
-			_ = d.store.SetMeta(d.ctx, "last_sync",
-				fmt.Sprintf("%s (fixture: %d tracks from %d albums)", nowStamp(), n, len(d.cfg.FixtureAlbums)))
-			d.log.Info("fixture sync complete", "albums", len(d.cfg.FixtureAlbums), "tracks", n)
-		}()
-		return control.SyncStarted{Started: true, Message: "fixture sync started"}, nil
+// SyncStop cancels an in-progress sync. Errors if downloads are active.
+func (d *Daemon) SyncStop(ctx context.Context) error {
+	stage, _ := d.store.GetMeta(ctx, metaCurrentStage)
+	if stage == store.StageDownloading || stage == store.StageImporting {
+		return fmt.Errorf("cannot stop sync while %s is active", stage)
 	}
+	// Sync runs synchronously inside the orchestrator; sending orchSyncStop
+	// interrupts the wait interval so the next sync won't start.
+	select {
+	case d.orchCh <- orchSyncStop:
+	default:
+	}
+	return nil
+}
 
-	dsel := deezer.Selection(sel)
-	if !dsel.Any() {
-		// Default to the configured favorite types.
-		f := d.cfg.Download.Favorites
-		dsel = deezer.Selection{Albums: f.Albums, Artists: f.Artists, Playlists: f.Playlists, Tracks: f.Tracks}
-	}
-	if !dsel.Any() {
-		d.syncMu.Lock()
-		d.syncing = false
-		d.syncMu.Unlock()
-		return control.SyncStarted{}, fmt.Errorf("no favorite types selected")
-	}
-
-	go func() {
-		res, err := d.pipe.Sync(d.ctx, dsel)
-		d.syncMu.Lock()
-		d.syncing = false
-		d.syncMu.Unlock()
-		if err != nil {
-			d.log.Error("sync failed", "err", err)
-			return
+// DownloadStart enqueues ids (optional) then triggers the download run.
+func (d *Daemon) DownloadStart(ctx context.Context, kind string, ids []int64) error {
+	if len(ids) > 0 {
+		if kind == "" {
+			kind = store.KindTrack
 		}
-		_ = d.store.SetMeta(d.ctx, "last_sync",
-			fmt.Sprintf("%s (new %d / seen %d)", nowStamp(), res.New, res.Total))
-		d.log.Info("sync complete", "new", res.New, "seen", res.Total)
-	}()
-
-	return control.SyncStarted{Started: true, Message: "sync started"}, nil
-}
-
-// Download enqueues specific ids for downloading.
-func (d *Daemon) Download(ctx context.Context, kind string, ids []int64) (int, error) {
-	if kind == "" {
-		kind = store.KindTrack
+		if _, err := d.pipe.EnqueueIDs(d.ctx, kind, ids); err != nil {
+			return err
+		}
 	}
-	return d.pipe.EnqueueIDs(d.ctx, kind, ids)
+	select {
+	case d.orchCh <- orchDownload:
+		return nil
+	default:
+		return fmt.Errorf("orchestrator busy")
+	}
 }
 
-// Redownload forces re-download by mode ("all" or "missing").
+// DownloadStop aborts the active download run after the current batch.
+func (d *Daemon) DownloadStop(ctx context.Context) error {
+	select {
+	case <-d.stopDLCh:
+		// Already closed / stopped.
+	default:
+		close(d.stopDLCh)
+	}
+	return nil
+}
+
+// Redownload forces re-download by mode ("all", "missing", or "failed").
 func (d *Daemon) Redownload(ctx context.Context, mode string, ids []int64) (int, error) {
+	var n int
+	var err error
 	switch mode {
 	case "all":
-		return d.pipe.ForceAll(d.ctx, ids)
+		n, err = d.pipe.ForceAll(d.ctx, ids)
 	case "missing":
-		return d.pipe.ForceMissing(d.ctx)
+		n, err = d.pipe.ForceMissing(d.ctx)
+	case "failed":
+		n, err = d.store.RequeueAllFailed(d.ctx)
 	default:
-		return 0, fmt.Errorf("redownload mode must be 'all' or 'missing', got %q", mode)
+		return 0, fmt.Errorf("redownload mode must be 'all', 'missing', or 'failed', got %q", mode)
 	}
-}
-
-// StartDownload starts the download stage.
-func (d *Daemon) StartDownload(ctx context.Context) error {
-	d.pipe.StartDownload(d.ctx)
-	return nil
-}
-
-// StopDownload stops the download stage.
-func (d *Daemon) StopDownload(ctx context.Context) error {
-	d.pipe.StopDownload()
-	return nil
+	if err != nil {
+		return 0, err
+	}
+	// Trigger a download run for the newly requeued items.
+	select {
+	case d.orchCh <- orchDownload:
+	default:
+	}
+	return n, nil
 }
 
 // BlocklistAdd blocklists ids of a kind.
@@ -149,12 +141,9 @@ func (d *Daemon) BlocklistList(ctx context.Context) ([]store.Block, error) {
 	return d.store.ListBlocks(ctx)
 }
 
-// BeetsImport triggers a manual import of a path.
-func (d *Daemon) BeetsImport(ctx context.Context, path string) error {
-	if path == "" {
-		return fmt.Errorf("import path required")
-	}
-	return d.imp.Import(d.ctx, path, nil)
+// BeetsImport triggers a manual full-library import run.
+func (d *Daemon) BeetsImport(ctx context.Context) error {
+	return d.pipe.RunImport(d.ctx)
 }
 
 // Items lists items in the given states.

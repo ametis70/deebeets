@@ -26,15 +26,15 @@ func NewRunner(cfg config.Beets, postHooks []string, log *slog.Logger) *Runner {
 	return &Runner{cfg: cfg, postHooks: postHooks, log: log}
 }
 
-// Import runs beets (if enabled) on albumDir, then any post-hooks. It satisfies
-// downloader.Importer.
-func (r *Runner) Import(ctx context.Context, albumDir string, files []string) error {
+// Import runs beets (if enabled) on musicDir (the full library root), then any
+// post-hooks. It satisfies downloader.Importer.
+func (r *Runner) Import(ctx context.Context, musicDir string) error {
 	if r.cfg.Enabled {
-		if err := r.runBeets(ctx, albumDir); err != nil {
+		if err := r.runBeets(ctx, musicDir); err != nil {
 			return err
 		}
 	}
-	return r.runHooks(ctx, albumDir, files)
+	return r.runHooks(ctx, musicDir)
 }
 
 // runBeets invokes `beet [-c config] <args...> <albumDir>`. The global -c option
@@ -57,8 +57,8 @@ func (r *Runner) runBeets(ctx context.Context, albumDir string) error {
 }
 
 // runHooks executes each configured post-hook via the shell, exporting the
-// album directory and file list so hooks can act on the import.
-func (r *Runner) runHooks(ctx context.Context, albumDir string, files []string) error {
+// music directory so hooks can act on the full library.
+func (r *Runner) runHooks(ctx context.Context, musicDir string) error {
 	for _, hook := range r.postHooks {
 		hook = strings.TrimSpace(hook)
 		if hook == "" {
@@ -66,8 +66,7 @@ func (r *Runner) runHooks(ctx context.Context, albumDir string, files []string) 
 		}
 		cmd := exec.CommandContext(ctx, "sh", "-c", hook)
 		cmd.Env = append(os.Environ(),
-			"DEEBEETS_ALBUM_DIR="+albumDir,
-			"DEEBEETS_FILES="+strings.Join(files, "\n"),
+			"DEEBEETS_MUSIC_DIR="+musicDir,
 		)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
