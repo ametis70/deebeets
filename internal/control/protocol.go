@@ -8,19 +8,29 @@ import (
 	"deebeets/internal/store"
 )
 
-// Controller is the daemon-side behaviour the server exposes. The daemon
-// implements it; the control package never imports the daemon.
+// Controller is the daemon-side behaviour the server exposes.
 type Controller interface {
 	Status(ctx context.Context) (StatusResponse, error)
-	Sync(ctx context.Context, sel Selection) (SyncStarted, error)
-	Download(ctx context.Context, kind string, ids []int64) (int, error)
+
+	// Sync triggers an immediate sync run. Errors if downloads are active.
+	SyncStart(ctx context.Context, sel Selection) error
+	// SyncStop cancels an in-progress sync. Errors if downloads are active.
+	SyncStop(ctx context.Context) error
+
+	// DownloadStart enqueues ids (optional) and triggers the download run.
+	DownloadStart(ctx context.Context, kind string, ids []int64) error
+	// DownloadStop aborts the active download run after the current batch.
+	DownloadStop(ctx context.Context) error
+
 	Redownload(ctx context.Context, mode string, ids []int64) (int, error)
-	StartDownload(ctx context.Context) error
-	StopDownload(ctx context.Context) error
+
 	BlocklistAdd(ctx context.Context, kind string, ids []int64, reason string) error
 	BlocklistRemove(ctx context.Context, kind string, ids []int64) error
 	BlocklistList(ctx context.Context) ([]store.Block, error)
-	BeetsImport(ctx context.Context, path string) error
+
+	// BeetsImport triggers a manual full-library import run.
+	BeetsImport(ctx context.Context) error
+
 	Items(ctx context.Context, states []string, limit int) ([]store.Item, error)
 }
 
@@ -34,31 +44,24 @@ type Selection struct {
 
 // StatusResponse summarises daemon and queue state.
 type StatusResponse struct {
-	DownloadRunning bool           `json:"download_running"`
-	DownloadStatus  string         `json:"download_status"`
-	Counts          map[string]int `json:"counts"`
-	LastSync        string         `json:"last_sync,omitempty"`
-	Syncing         bool           `json:"syncing"`
+	// Stage is the current orchestrator stage: idle|syncing|downloading|importing.
+	Stage   string         `json:"stage"`
+	Counts  map[string]int `json:"counts"`
+	LastSync string        `json:"last_sync,omitempty"`
 }
 
-// SyncStarted reports whether a background sync was kicked off.
-type SyncStarted struct {
-	Started bool   `json:"started"`
-	Message string `json:"message"`
-}
-
-// SyncRequest selects favorite types to pull.
-type SyncRequest struct {
+// SyncStartRequest selects favorite types to pull.
+type SyncStartRequest struct {
 	Selection
 }
 
-// DownloadRequest enqueues specific ids of a kind (track|album|artist|playlist).
-type DownloadRequest struct {
-	Kind string  `json:"kind"`
-	IDs  []int64 `json:"ids"`
+// DownloadStartRequest enqueues specific ids of a kind (optional).
+type DownloadStartRequest struct {
+	Kind string  `json:"kind,omitempty"`
+	IDs  []int64 `json:"ids,omitempty"`
 }
 
-// RedownloadRequest forces re-download. Mode is "all" or "missing".
+// RedownloadRequest forces re-download. Mode is "all", "missing", or "failed".
 type RedownloadRequest struct {
 	Mode string  `json:"mode"`
 	IDs  []int64 `json:"ids,omitempty"`
@@ -69,11 +72,6 @@ type BlocklistRequest struct {
 	Kind   string  `json:"kind"`
 	IDs    []int64 `json:"ids"`
 	Reason string  `json:"reason,omitempty"`
-}
-
-// BeetsImportRequest triggers a manual import of a path.
-type BeetsImportRequest struct {
-	Path string `json:"path"`
 }
 
 // ItemsResponse carries a list of items.

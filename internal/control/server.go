@@ -37,11 +37,11 @@ func (s *Server) Listen() error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /status", s.handleStatus)
-	mux.HandleFunc("POST /sync", s.handleSync)
-	mux.HandleFunc("POST /download", s.handleDownload)
+	mux.HandleFunc("POST /sync/start", s.handleSyncStart)
+	mux.HandleFunc("POST /sync/stop", s.handleSyncStop)
+	mux.HandleFunc("POST /download/start", s.handleDownloadStart)
+	mux.HandleFunc("POST /download/stop", s.handleDownloadStop)
 	mux.HandleFunc("POST /redownload", s.handleRedownload)
-	mux.HandleFunc("POST /start", s.handleStart)
-	mux.HandleFunc("POST /stop", s.handleStop)
 	mux.HandleFunc("GET /blocklist", s.handleBlocklistList)
 	mux.HandleFunc("POST /blocklist", s.handleBlocklistAdd)
 	mux.HandleFunc("DELETE /blocklist", s.handleBlocklistRemove)
@@ -78,7 +78,6 @@ func writeErr(w http.ResponseWriter, code int, err error) {
 	writeJSON(w, code, APIResponse{OK: false, Error: err.Error()})
 }
 
-// decode reads a JSON request body, tolerating an empty body (optional payload).
 func decode(r *http.Request, v any) error {
 	if r.Body == nil {
 		return nil
@@ -111,32 +110,46 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, st)
 }
 
-func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
-	var req SyncRequest
+func (s *Server) handleSyncStart(w http.ResponseWriter, r *http.Request) {
+	var req SyncStartRequest
 	if err := decode(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	res, err := s.ctrl.Sync(r.Context(), req.Selection)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err)
+	if err := s.ctrl.SyncStart(r.Context(), req.Selection); err != nil {
+		writeErr(w, http.StatusConflict, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, res)
+	writeJSON(w, http.StatusOK, APIResponse{OK: true, Message: "sync started"})
 }
 
-func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
-	var req DownloadRequest
+func (s *Server) handleSyncStop(w http.ResponseWriter, r *http.Request) {
+	if err := s.ctrl.SyncStop(r.Context()); err != nil {
+		writeErr(w, http.StatusConflict, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, APIResponse{OK: true, Message: "sync stopped"})
+}
+
+func (s *Server) handleDownloadStart(w http.ResponseWriter, r *http.Request) {
+	var req DownloadStartRequest
 	if err := decode(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	n, err := s.ctrl.Download(r.Context(), req.Kind, req.IDs)
-	if err != nil {
+	if err := s.ctrl.DownloadStart(r.Context(), req.Kind, req.IDs); err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, CountResponse{Count: n})
+	writeJSON(w, http.StatusOK, APIResponse{OK: true, Message: "download started"})
+}
+
+func (s *Server) handleDownloadStop(w http.ResponseWriter, r *http.Request) {
+	if err := s.ctrl.DownloadStop(r.Context()); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, APIResponse{OK: true, Message: "download stopped"})
 }
 
 func (s *Server) handleRedownload(w http.ResponseWriter, r *http.Request) {
@@ -151,22 +164,6 @@ func (s *Server) handleRedownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, CountResponse{Count: n})
-}
-
-func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
-	if err := s.ctrl.StartDownload(r.Context()); err != nil {
-		writeErr(w, http.StatusInternalServerError, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, APIResponse{OK: true, Message: "download stage started"})
-}
-
-func (s *Server) handleStop(w http.ResponseWriter, r *http.Request) {
-	if err := s.ctrl.StopDownload(r.Context()); err != nil {
-		writeErr(w, http.StatusInternalServerError, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, APIResponse{OK: true, Message: "download stage stopped"})
 }
 
 func (s *Server) handleBlocklistAdd(w http.ResponseWriter, r *http.Request) {
@@ -205,12 +202,7 @@ func (s *Server) handleBlocklistList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBeetsImport(w http.ResponseWriter, r *http.Request) {
-	var req BeetsImportRequest
-	if err := decode(r, &req); err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return
-	}
-	if err := s.ctrl.BeetsImport(r.Context(), req.Path); err != nil {
+	if err := s.ctrl.BeetsImport(r.Context()); err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -222,8 +214,7 @@ func (s *Server) handleItems(w http.ResponseWriter, r *http.Request) {
 	if q := r.URL.Query().Get("state"); q != "" {
 		states = splitCSV(q)
 	}
-	limit := 0 // 0 = unlimited
-	items, err := s.ctrl.Items(r.Context(), states, limit)
+	items, err := s.ctrl.Items(r.Context(), states, 0)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return

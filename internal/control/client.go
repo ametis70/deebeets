@@ -23,7 +23,6 @@ func NewClient(socketPath string) *Client {
 	return &Client{
 		socketPath: socketPath,
 		http: &http.Client{
-			// Sync can enumerate large libraries; allow generous time.
 			Timeout: 30 * time.Minute,
 			Transport: &http.Transport{
 				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
@@ -56,7 +55,6 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	} else {
 		rdr = bytes.NewReader(nil)
 	}
-	// The host is ignored for unix sockets but must be a valid URL.
 	req, err := http.NewRequestWithContext(ctx, method, "http://unix"+path, rdr)
 	if err != nil {
 		return err
@@ -89,35 +87,31 @@ func (c *Client) Status(ctx context.Context) (StatusResponse, error) {
 	return out, err
 }
 
-// Sync triggers a favorites sync.
-func (c *Client) Sync(ctx context.Context, sel Selection) (SyncStarted, error) {
-	var out SyncStarted
-	err := c.do(ctx, http.MethodPost, "/sync", SyncRequest{Selection: sel}, &out)
-	return out, err
+// SyncStart triggers an immediate sync run.
+func (c *Client) SyncStart(ctx context.Context, sel Selection) error {
+	return c.do(ctx, http.MethodPost, "/sync/start", SyncStartRequest{Selection: sel}, nil)
 }
 
-// Download enqueues ids of a kind.
-func (c *Client) Download(ctx context.Context, kind string, ids []int64) (int, error) {
-	var out CountResponse
-	err := c.do(ctx, http.MethodPost, "/download", DownloadRequest{Kind: kind, IDs: ids}, &out)
-	return out.Count, err
+// SyncStop cancels an in-progress sync.
+func (c *Client) SyncStop(ctx context.Context) error {
+	return c.do(ctx, http.MethodPost, "/sync/stop", nil, nil)
 }
 
-// Redownload forces re-download (mode "all" or "missing").
+// DownloadStart enqueues ids (optional) and triggers the download run.
+func (c *Client) DownloadStart(ctx context.Context, kind string, ids []int64) error {
+	return c.do(ctx, http.MethodPost, "/download/start", DownloadStartRequest{Kind: kind, IDs: ids}, nil)
+}
+
+// DownloadStop aborts the active download run.
+func (c *Client) DownloadStop(ctx context.Context) error {
+	return c.do(ctx, http.MethodPost, "/download/stop", nil, nil)
+}
+
+// Redownload forces re-download (mode "all", "missing", or "failed").
 func (c *Client) Redownload(ctx context.Context, mode string, ids []int64) (int, error) {
 	var out CountResponse
 	err := c.do(ctx, http.MethodPost, "/redownload", RedownloadRequest{Mode: mode, IDs: ids}, &out)
 	return out.Count, err
-}
-
-// Start starts the download stage.
-func (c *Client) Start(ctx context.Context) error {
-	return c.do(ctx, http.MethodPost, "/start", nil, nil)
-}
-
-// Stop stops the download stage.
-func (c *Client) Stop(ctx context.Context) error {
-	return c.do(ctx, http.MethodPost, "/stop", nil, nil)
 }
 
 // BlocklistAdd adds entries.
@@ -137,9 +131,9 @@ func (c *Client) BlocklistList(ctx context.Context) ([]store.Block, error) {
 	return out, err
 }
 
-// BeetsImport triggers a manual import of a path.
-func (c *Client) BeetsImport(ctx context.Context, path string) error {
-	return c.do(ctx, http.MethodPost, "/beets/import", BeetsImportRequest{Path: path}, nil)
+// BeetsImport triggers a manual full-library import run.
+func (c *Client) BeetsImport(ctx context.Context) error {
+	return c.do(ctx, http.MethodPost, "/beets/import", nil, nil)
 }
 
 // Items lists items in the given states.
