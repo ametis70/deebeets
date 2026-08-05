@@ -6,86 +6,117 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// downloadCmd returns the `download` parent command with start/stop subcommands.
 func downloadCmd() *cobra.Command {
-	var kind string
-	var forceAll bool
 	c := &cobra.Command{
-		Use:   "download <id> [<id>...]",
-		Short: "Enqueue specific Deezer ids for downloading",
-		Args:  cobra.MinimumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ids, err := parseIDs(args)
-			if err != nil {
-				return err
-			}
-			client, err := requireClient()
-			if err != nil {
-				return err
-			}
-			switch kind {
-			case "track", "album", "artist", "playlist":
-			default:
-				return fmt.Errorf("--type must be track|album|artist|playlist")
-			}
-
-			n, err := client.Download(ctx(), kind, ids)
-			if err != nil {
-				return err
-			}
-			fmt.Printf("queued %d track(s)\n", n)
-
-			if forceAll {
-				m, err := client.Redownload(ctx(), "all", ids)
-				if err != nil {
-					return err
-				}
-				fmt.Printf("force-all requeued %d existing track(s)\n", m)
-			}
-			return nil
-		},
+		Use:   "download",
+		Short: "Manage the download stage",
 	}
-	c.Flags().StringVar(&kind, "type", "track", "id type: track|album|artist|playlist")
-	c.Flags().BoolVar(&forceAll, "force-all", false, "also requeue matching ids already downloaded")
+	c.AddCommand(downloadStartCmd(), downloadStopCmd())
 	return c
 }
 
-func redownloadCmd() *cobra.Command {
-	var all, missing bool
+func downloadStartCmd() *cobra.Command {
+	var kind string
 	c := &cobra.Command{
-		Use:   "redownload [<id>...]",
-		Short: "Force re-download of items",
-		Long: "Two distinct modes:\n" +
-			"  --all      re-download regardless of state (optionally limited to ids), " +
-			"overwriting files. For quality upgrades or corruption.\n" +
-			"  --missing  re-download only finished items whose file is gone from disk. " +
-			"For restoring deleted files.",
+		Use:   "start [<id>...]",
+		Short: "Start downloading (optionally enqueue specific ids first)",
+		Long: "Triggers the download run immediately, interrupting the poll timer. " +
+			"If ids are supplied they are enqueued before the run starts.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if all == missing {
-				return fmt.Errorf("choose exactly one of --all or --missing")
+			var ids []int64
+			if len(args) > 0 {
+				var err error
+				ids, err = parseIDs(args)
+				if err != nil {
+					return err
+				}
+				switch kind {
+				case "track", "album", "artist", "playlist":
+				default:
+					return fmt.Errorf("--type must be track|album|artist|playlist")
+				}
 			}
 			client, err := requireClient()
 			if err != nil {
 				return err
 			}
+			if err := client.DownloadStart(ctx(), kind, ids); err != nil {
+				return err
+			}
+			fmt.Println("download started")
+			return nil
+		},
+	}
+	c.Flags().StringVar(&kind, "type", "track", "id type when enqueuing: track|album|artist|playlist")
+	return c
+}
+
+func downloadStopCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "stop",
+		Short: "Abort the active download run (partial files deleted, items requeued)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, err := requireClient()
+			if err != nil {
+				return err
+			}
+			if err := client.DownloadStop(ctx()); err != nil {
+				return err
+			}
+			fmt.Println("download stop signal sent")
+			return nil
+		},
+	}
+}
+
+func redownloadCmd() *cobra.Command {
+	var all, missing, failed bool
+	c := &cobra.Command{
+		Use:   "redownload [<id>...]",
+		Short: "Force re-download of items",
+		Long: "Three modes (choose exactly one):\n" +
+			"  --all      re-download regardless of state (optionally limited to ids)\n" +
+			"  --missing  re-download only finished items whose file is gone from disk\n" +
+			"  --failed   requeue all permanently-failed items and start downloading",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			n := 0
+			for _, b := range []bool{all, missing, failed} {
+				if b {
+					n++
+				}
+			}
+			if n != 1 {
+				return fmt.Errorf("choose exactly one of --all, --missing, or --failed")
+			}
+			client, err := requireClient()
+			if err != nil {
+				return err
+			}
+
 			mode := "all"
 			var ids []int64
-			if missing {
+			switch {
+			case missing:
 				mode = "missing"
-			} else {
+			case failed:
+				mode = "failed"
+			default:
 				ids, err = parseIDs(args)
 				if err != nil {
 					return err
 				}
 			}
-			n, err := client.Redownload(ctx(), mode, ids)
+			count, err := client.Redownload(ctx(), mode, ids)
 			if err != nil {
 				return err
 			}
-			fmt.Printf("requeued %d item(s) for re-download (%s)\n", n, mode)
+			fmt.Printf("requeued %d item(s) for re-download (%s)\n", count, mode)
 			return nil
 		},
 	}
 	c.Flags().BoolVar(&all, "all", false, "re-download everything (or the given ids)")
 	c.Flags().BoolVar(&missing, "missing", false, "re-download only files missing from disk")
+	c.Flags().BoolVar(&failed, "failed", false, "requeue all permanently-failed items")
 	return c
 }

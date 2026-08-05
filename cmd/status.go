@@ -7,14 +7,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"deebeets/internal/downloader"
 	"deebeets/internal/store"
 )
 
 // stateOrder is the display order for state counts.
 var stateOrder = []string{
 	store.StateWaiting, store.StateQueued, store.StateDownloading,
-	store.StateDownloaded, store.StateImporting, store.StateFinished,
+	store.StateDownloaded, store.StateFinished,
 	store.StateFailed, store.StateBlocklisted, store.StateSkipped,
 }
 
@@ -27,13 +26,12 @@ func statusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			// Live view via the daemon; fall back to the DB when it's down.
 			if client.Available() {
 				st, err := client.Status(ctx())
 				if err != nil {
 					return err
 				}
-				printStatus(st.DownloadStatus, st.DownloadRunning, st.Syncing, st.LastSync, st.Counts)
+				printStatus(st.Stage, st.LastSync, st.Counts)
 				return nil
 			}
 
@@ -50,21 +48,22 @@ func statusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			dlStatus, _ := s.GetMeta(ctx(), downloader.MetaDownloadStatus)
+			stage, _ := s.GetMeta(ctx(), "current_stage")
 			last, _ := s.GetMeta(ctx(), "last_sync")
-			running := counts[store.StateDownloading] > 0
+			if stage == "" {
+				stage = store.StageIdle
+			}
 			fmt.Println("daemon: not running (showing database snapshot)")
-			printStatus(dlStatus, running, false, last, counts)
+			printStatus(stage, last, counts)
 			return nil
 		},
 	}
 }
 
-func printStatus(dlStatus string, running, syncing bool, lastSync string, counts map[string]int) {
-	fmt.Printf("download stage: %s (running=%v)\n", orDash(dlStatus), running)
-	fmt.Printf("syncing:        %v\n", syncing)
+func printStatus(stage, lastSync string, counts map[string]int) {
+	fmt.Printf("stage:     %s\n", orDash(stage))
 	if lastSync != "" {
-		fmt.Printf("last sync:      %s\n", lastSync)
+		fmt.Printf("last sync: %s\n", lastSync)
 	}
 	fmt.Println("queue:")
 	tw := tabwriter.NewWriter(cmdOut, 0, 0, 2, ' ', 0)
@@ -75,7 +74,6 @@ func printStatus(dlStatus string, running, syncing bool, lastSync string, counts
 			seen[st] = true
 		}
 	}
-	// Any states not in the canonical order.
 	var extra []string
 	for st := range counts {
 		if !seen[st] {

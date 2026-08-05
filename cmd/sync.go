@@ -8,29 +8,34 @@ import (
 	"deebeets/internal/control"
 )
 
+// syncCmd returns the `sync` parent command with start/stop subcommands.
 func syncCmd() *cobra.Command {
-	var albums, artists, playlists, tracks bool
 	c := &cobra.Command{
 		Use:   "sync",
-		Short: "Pull favorites from Deezer into the queue (does not download)",
+		Short: "Manage the favorites sync",
+	}
+	c.AddCommand(syncStartCmd(), syncStopCmd())
+	return c
+}
+
+func syncStartCmd() *cobra.Command {
+	var albums, artists, playlists, tracks bool
+	c := &cobra.Command{
+		Use:   "start",
+		Short: "Trigger an immediate favorites sync",
 		Long: "Pulls the selected favorite types and enqueues them. With no flags " +
-			"the configured default favorite types are used. Downloading is " +
-			"controlled separately with `start`/`stop`.",
+			"the configured default favorite types are used. Cannot run while a " +
+			"download or import is active.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := requireClient()
 			if err != nil {
 				return err
 			}
 			sel := control.Selection{Albums: albums, Artists: artists, Playlists: playlists, Tracks: tracks}
-			res, err := client.Sync(ctx(), sel)
-			if err != nil {
+			if err := client.SyncStart(ctx(), sel); err != nil {
 				return err
 			}
-			if res.Started {
-				fmt.Println("sync started in the background; check `deebeets status`")
-			} else {
-				fmt.Println(res.Message)
-			}
+			fmt.Println("sync started")
 			return nil
 		},
 	}
@@ -41,37 +46,20 @@ func syncCmd() *cobra.Command {
 	return c
 }
 
-func startCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "start",
-		Short: "Start draining the download queue",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			client, err := requireClient()
-			if err != nil {
-				return err
-			}
-			if err := client.Start(ctx()); err != nil {
-				return err
-			}
-			fmt.Println("download stage started")
-			return nil
-		},
-	}
-}
-
-func stopCmd() *cobra.Command {
+func syncStopCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "stop",
-		Short: "Stop draining the download queue (finishes in-flight, then pauses)",
+		Short: "Cancel an in-progress sync",
+		Long:  "Cannot stop sync while a download or import is active.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := requireClient()
 			if err != nil {
 				return err
 			}
-			if err := client.Stop(ctx()); err != nil {
+			if err := client.SyncStop(ctx()); err != nil {
 				return err
 			}
-			fmt.Println("download stage stopped")
+			fmt.Println("sync stopped")
 			return nil
 		},
 	}

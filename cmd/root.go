@@ -48,8 +48,6 @@ func rootCmd() *cobra.Command {
 		loginCmd(),
 		daemonCmd(),
 		syncCmd(),
-		startCmd(),
-		stopCmd(),
 		statusCmd(),
 		listCmd(),
 		downloadCmd(),

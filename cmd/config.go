@@ -53,10 +53,15 @@ func configPrintCmd() *cobra.Command {
 			fmt.Printf("download.favorites:   albums=%v artists=%v playlists=%v tracks=%v\n",
 				cfg.Download.Favorites.Albums, cfg.Download.Favorites.Artists,
 				cfg.Download.Favorites.Playlists, cfg.Download.Favorites.Tracks)
-			fmt.Printf("retry:                mode=%s max=%d backoff=%s\n",
-				cfg.Retry.Mode, cfg.Retry.MaxAttempts, cfg.Retry.Backoff)
-			fmt.Printf("ratelimit:            cooldown=%s max_hits=%d window=%s\n",
-				cfg.RateLimit.Cooldown, cfg.RateLimit.MaxHits, cfg.RateLimit.Window)
+		fmt.Printf("download.auto:        %v\n", cfg.Download.Auto)
+		fmt.Printf("download.retry:       max=%d backoff=%s\n",
+			cfg.Download.Retry.MaxAttempts, cfg.Download.Retry.Backoff)
+		fmt.Printf("sync.interval:        %s\n", cfg.Sync.Interval)
+		fmt.Printf("sync.retry:           max=%d backoff=%s\n",
+			cfg.Sync.Retry.MaxAttempts, cfg.Sync.Retry.Backoff)
+		fmt.Printf("import.auto:          %v\n", cfg.Import.Auto)
+		fmt.Printf("ratelimit:            cooldown=%s max_hits=%d window=%s backoff=%s\n",
+			cfg.RateLimit.Cooldown, cfg.RateLimit.MaxHits, cfg.RateLimit.Window, cfg.RateLimit.Backoff)
 			fmt.Printf("beets:                enabled=%v binary=%s concurrency=%d\n",
 				cfg.Beets.Enabled, cfg.Beets.Binary, cfg.Beets.Concurrency)
 			return nil
