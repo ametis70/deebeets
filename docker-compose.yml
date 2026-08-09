@@ -12,11 +12,12 @@ services:
     build: .
     environment:
       DEEBEETS_SECRET: test
-      DEEBEETS_FIXTURE_ALBUMS: "57783852,796709881,502723"
+      DEEBEETS_FIXTURE_ALBUMS: "502723"
     command: ["daemon", "--config", "/config/config.docker.toml"]
     volumes:
       - ./config.docker.toml:/config/config.docker.toml:ro
       - ./beets.yaml:/config/beets/config.yaml:ro
+      - ./scripts:/config/scripts:ro
       - deebeets-state:/config
       - music:/music
     restart: unless-stopped
