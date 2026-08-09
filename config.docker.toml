@@ -32,8 +32,13 @@ tracks    = true
 max_attempts = 3
 backoff      = "5s"
 
-[import]
-auto = true
+[convert]
+enabled     = true
+auto        = true
+dest        = "/music/ogg"
+concurrency = 2
+format      = "opus"
+ffmpeg_args = "ffmpeg -i $source -y -vn -c:a libopus -b:a 160k -vbr on -compression_level 10 $dest"
 
 [ratelimit]
 cooldown = "30s"
@@ -50,13 +55,4 @@ fields = [
 ]
 naming_template = "{{.AlbumArtist}}/{{.Album}}{{if .Year}} ({{.Year}}){{end}}/{{if .MultiDisc}}{{.Disc}}-{{end}}{{printf \"%02d\" .Track}} {{.Title}}.{{.Ext}}"
 
-[beets]
-enabled     = true
-binary      = "beet"
-config_path = "/config/beets/config.yaml"
-args        = ["import", "-q"]
-concurrency = 1
-
-posthooks = [
-  "python3 /config/scripts/fix-opus-artists.py",
-]
+posthooks = []

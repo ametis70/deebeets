@@ -2,7 +2,7 @@
 #
 # First-time setup:
 #   docker compose up --build -d
-#   docker compose exec deebeets deebeets login
+#   docker compose exec -it deebeets deebeets login
 #   docker compose exec deebeets deebeets sync start
 #
 # Then open http://localhost:4533
@@ -12,12 +12,10 @@ services:
     build: .
     environment:
       DEEBEETS_SECRET: test
-      DEEBEETS_FIXTURE_ALBUMS: "502723"
+      DEEBEETS_FIXTURE_ALBUMS: "57783852,796709881,502723"
     command: ["daemon", "--config", "/config/config.docker.toml"]
     volumes:
       - ./config.docker.toml:/config/config.docker.toml:ro
-      - ./beets.yaml:/config/beets/config.yaml:ro
-      - ./scripts:/config/scripts:ro
       - deebeets-state:/config
       - music:/music
     restart: unless-stopped
