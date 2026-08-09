@@ -16,7 +16,7 @@ services:
     command: ["daemon", "--config", "/config/config.docker.toml"]
     volumes:
       - ./config.docker.toml:/config/config.docker.toml:ro
-      - ./beets.yaml:/config/beets.yaml:ro
+      - ./beets.yaml:/config/beets/config.yaml:ro
       - deebeets-state:/config
       - music:/music
     restart: unless-stopped
@@ -26,7 +26,7 @@ services:
     ports:
       - "4533:4533"
     environment:
-      ND_MUSICFOLDER: /music/flac:/music/ogg
+      ND_MUSICFOLDER: /music
       ND_DATAFOLDER: /data
       ND_LOGLEVEL: info
       ND_SCANSCHEDULE: "@every 1m"

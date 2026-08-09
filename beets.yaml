@@ -1,8 +1,8 @@
-library: /config/beets.db
+library: /config/beets/library.db
 directory: /music/ogg
 
 logging:
-  file: /config/beets.log
+  file: /config/beets/beets.log
   level: info
 
 import:

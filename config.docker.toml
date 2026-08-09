@@ -53,7 +53,7 @@ naming_template = "{{.AlbumArtist}}/{{.Album}}{{if .Year}} ({{.Year}}){{end}}/{{
 [beets]
 enabled     = true
 binary      = "beet"
-config_path = "/config/beets.yaml"
+config_path = "/config/beets/config.yaml"
 args        = ["import", "-q"]
 concurrency = 1
 
