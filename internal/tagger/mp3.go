@@ -129,10 +129,3 @@ func disctotalOrZero(f FieldSet, md Metadata) int {
 	}
 	return 0
 }
-
-func coverMIME(md Metadata) string {
-	if md.CoverMIME != "" {
-		return md.CoverMIME
-	}
-	return "image/jpeg"
-}

@@ -52,6 +52,16 @@ func NewFieldSet(fields []string) FieldSet {
 
 func (fs FieldSet) on(name string) bool { return fs[name] }
 
+// DefaultFieldSet returns the full set of fields used when converting files.
+func DefaultFieldSet() FieldSet {
+	return NewFieldSet([]string{
+		"title", "artist", "albumartist", "album",
+		"tracknumber", "totaltracks", "discnumber", "disctotal",
+		"date", "genre", "label", "composer", "isrc", "barcode",
+		"copyright", "bpm", "replaygain", "comment", "lyrics",
+	})
+}
+
 // ExtForFormat returns the file extension (no dot) for a Deezer format name.
 func ExtForFormat(format string) string {
 	switch format {
@@ -65,15 +75,16 @@ func ExtForFormat(format string) string {
 }
 
 // Write applies the enabled tags to the file at path, choosing the container by
-// format ("FLAC" -> FLAC/Vorbis, everything else -> MP3/ID3v2).
+// format ("FLAC" -> FLAC/Vorbis, "OGG_OPUS" -> Ogg Opus via ffmpeg, everything else -> MP3/ID3v2).
 func Write(path, format string, md Metadata, fields FieldSet) error {
-	switch ExtForFormat(format) {
-	case "flac":
+	switch format {
+	case "FLAC":
 		return writeFLAC(path, md, fields)
-	case "mp3":
+	case "OGG_OPUS":
+		return writeOggOpus(path, md, fields)
+	case "MP3_128", "MP3_256", "MP3_320", "MP3_64":
 		return writeMP3(path, md, fields)
 	default:
-		// Unsupported container for baseline tagging; leave the file untouched.
 		return nil
 	}
 }
