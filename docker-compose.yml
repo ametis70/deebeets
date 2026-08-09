@@ -11,6 +11,7 @@ services:
   deebeets:
     build: .
     environment:
+      DEEBEETS_SECRET: test
       DEEBEETS_FIXTURE_ALBUMS: "57783852,796709881,502723"
     command: ["daemon", "--config", "/config/config.docker.toml"]
     volumes:
@@ -25,7 +26,7 @@ services:
     ports:
       - "4533:4533"
     environment:
-      ND_MUSICFOLDER: /music
+      ND_MUSICFOLDER: /music/flac:/music/ogg
       ND_DATAFOLDER: /data
       ND_LOGLEVEL: info
       ND_SCANSCHEDULE: "@every 1m"

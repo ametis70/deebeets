@@ -20,9 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install beets + plugins used in beets.yaml
 RUN pip install --no-cache-dir \
-      beets \
-      beets-deezer \
-      beets-multiartist
+      beets
 
 # Copy the compiled binary
 COPY --from=builder /deebeets /usr/local/bin/deebeets

@@ -1,8 +1,8 @@
 library: /config/beets.db
-directory: /music
+directory: /music/ogg
 
 logging:
-  file: ~/.config/beets/beets.log
+  file: /config/beets.log
   level: info
 
 import:
@@ -146,6 +146,7 @@ deezer:
 convert:
   auto: yes
   format: opus
+  dest: /music/ogg
   copy_album_art: yes
   embed: yes
   threads: 4

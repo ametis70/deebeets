@@ -65,6 +65,9 @@ func (d *Daemon) SyncStop(ctx context.Context) error {
 // DownloadStart enqueues ids (optional) then triggers the download run.
 func (d *Daemon) DownloadStart(ctx context.Context, kind string, ids []int64) error {
 	if len(ids) > 0 {
+		if err := d.connectDeezer(ctx); err != nil {
+			return fmt.Errorf("not logged in: %w", err)
+		}
 		if kind == "" {
 			kind = store.KindTrack
 		}
@@ -96,10 +99,15 @@ func (d *Daemon) Redownload(ctx context.Context, mode string, ids []int64) (int,
 	var n int
 	var err error
 	switch mode {
-	case "all":
-		n, err = d.pipe.ForceAll(d.ctx, ids)
-	case "missing":
-		n, err = d.pipe.ForceMissing(d.ctx)
+	case "all", "missing":
+		if d.pipe == nil {
+			return 0, fmt.Errorf("not logged in")
+		}
+		if mode == "all" {
+			n, err = d.pipe.ForceAll(d.ctx, ids)
+		} else {
+			n, err = d.pipe.ForceMissing(d.ctx)
+		}
 	case "failed":
 		n, err = d.store.RequeueAllFailed(d.ctx)
 	default:
@@ -143,7 +151,11 @@ func (d *Daemon) BlocklistList(ctx context.Context) ([]store.Block, error) {
 
 // BeetsImport triggers a manual full-library import run.
 func (d *Daemon) BeetsImport(ctx context.Context) error {
-	return d.pipe.RunImport(d.ctx)
+	if d.pipe != nil {
+		return d.pipe.RunImport(d.ctx)
+	}
+	// Pipeline not initialised (no login yet) — run import directly via the runner.
+	return d.imp.Import(d.ctx, d.cfg.Paths.MusicDir)
 }
 
 // Items lists items in the given states.

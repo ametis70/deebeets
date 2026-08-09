@@ -6,7 +6,7 @@ arl = ""  # overridden by DEEBEETS_ARL env var at runtime
 format_priority = ["FLAC", "MP3_320", "MP3_128"]
 
 [paths]
-music_dir   = "/music"
+music_dir   = "/music/flac"
 db_path     = "/config/deebeets.db"
 socket_path = "/config/deebeets.sock"
 

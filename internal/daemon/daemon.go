@@ -40,8 +40,9 @@ type Daemon struct {
 	cfg   *config.Config
 	log   *slog.Logger
 	store *store.Store
-	dz    *deezer.Client
-	pipe  *downloader.Pipeline
+	dz    *deezer.Client   // nil until connectDeezer succeeds
+	pipe  *downloader.Pipeline // nil until connectDeezer succeeds
+	imp   *beets.Runner
 	srv   *control.Server
 
 	orchCh     chan orchCmd
@@ -57,31 +58,13 @@ func New(cfg *config.Config, log *slog.Logger) (*Daemon, error) {
 		return nil, err
 	}
 
-	arl, err := credentials.LoadARL(context.Background(), cfg.Deezer.ARL, st)
-	if err != nil {
-		st.Close()
-		return nil, fmt.Errorf("load credentials: %w", err)
-	}
-	if arl == "" {
-		st.Close()
-		return nil, fmt.Errorf("no ARL configured — run `deebeets login`, set deezer.arl in config, or export DEEBEETS_ARL")
-	}
-
-	dz, err := deezer.New(arl)
-	if err != nil {
-		st.Close()
-		return nil, err
-	}
-
 	runner := beets.NewRunner(cfg.Beets, cfg.PostHooks, log)
-	pipe := downloader.New(st, dz, cfg, runner, log)
 
 	d := &Daemon{
 		cfg:      cfg,
 		log:      log,
 		store:    st,
-		dz:       dz,
-		pipe:     pipe,
+		imp:      runner,
 		orchCh:   make(chan orchCmd, 4),
 		stopDLCh: make(chan struct{}),
 	}
@@ -89,18 +72,19 @@ func New(cfg *config.Config, log *slog.Logger) (*Daemon, error) {
 	return d, nil
 }
 
-// Run logs in, recovers interrupted work, starts the orchestrator and control
-// server, and blocks until a termination signal or ctx cancellation.
+// Run starts the control socket and orchestrator, blocking until shutdown.
+// The daemon starts even with no ARL configured; sync/download will fail until
+// `deebeets login` is run.
 func (d *Daemon) Run(parent context.Context) error {
 	ctx, cancel := signal.NotifyContext(parent, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 	d.ctx, d.cancel = ctx, cancel
 
-	if err := d.dz.Login(ctx); err != nil {
-		return fmt.Errorf("deezer login: %w", err)
+	// Best-effort: connect to Deezer if credentials are already stored.
+	// Failure is logged but does not prevent the daemon from starting.
+	if err := d.connectDeezer(ctx); err != nil {
+		d.log.Warn("deezer not connected (run `deebeets login`)", "err", err)
 	}
-	d.log.Info("logged in to deezer", "user_id", d.dz.UserID(),
-		"lossless", d.dz.CanStreamLossless(), "hq", d.dz.CanStreamHQ())
 
 	// Recover any downloads interrupted by a previous crash.
 	if n, err := d.store.RecoverInterrupted(ctx); err != nil {
@@ -108,7 +92,9 @@ func (d *Daemon) Run(parent context.Context) error {
 	} else if n > 0 {
 		d.log.Info("recovered interrupted downloads", "count", n)
 	}
-	d.pipe.CleanIncomplete()
+	if d.pipe != nil {
+		d.pipe.CleanIncomplete()
+	}
 
 	if err := d.srv.Listen(); err != nil {
 		return fmt.Errorf("control socket: %w", err)
@@ -143,6 +129,33 @@ func (d *Daemon) Close() {
 	if d.store != nil {
 		_ = d.store.Close()
 	}
+}
+
+// connectDeezer loads the ARL, creates the Deezer client, logs in, and
+// initialises the download pipeline. Idempotent: a no-op if already connected.
+func (d *Daemon) connectDeezer(ctx context.Context) error {
+	if d.pipe != nil {
+		return nil // already connected
+	}
+	arl, err := credentials.LoadARL(ctx, d.cfg.Deezer.ARL, d.store)
+	if err != nil {
+		return fmt.Errorf("load credentials: %w", err)
+	}
+	if arl == "" {
+		return fmt.Errorf("no ARL configured — run `deebeets login`")
+	}
+	dz, err := deezer.New(arl)
+	if err != nil {
+		return err
+	}
+	if err := dz.Login(ctx); err != nil {
+		return fmt.Errorf("deezer login: %w", err)
+	}
+	d.log.Info("logged in to deezer", "user_id", dz.UserID(),
+		"lossless", dz.CanStreamLossless(), "hq", dz.CanStreamHQ())
+	d.dz = dz
+	d.pipe = downloader.New(d.store, dz, d.cfg, d.imp, d.log)
+	return nil
 }
 
 // orchestrate is the single goroutine that sequences sync → download → import.
@@ -228,6 +241,11 @@ func (d *Daemon) runSyncThenDownload(ctx context.Context) {
 
 // runSync executes the sync stage with retries. Returns true on success.
 func (d *Daemon) runSync(ctx context.Context) bool {
+	if err := d.connectDeezer(ctx); err != nil {
+		d.log.Error("cannot sync: not logged in", "err", err)
+		_ = d.store.SetMeta(ctx, metaCurrentStage, store.StageIdle)
+		return false
+	}
 	_ = d.store.SetMeta(ctx, metaCurrentStage, store.StageSyncing)
 
 	sel := d.syncSelection()
@@ -272,6 +290,11 @@ func (d *Daemon) runSync(ctx context.Context) bool {
 
 // runDownload runs the download stage to completion.
 func (d *Daemon) runDownload(ctx context.Context) {
+	if err := d.connectDeezer(ctx); err != nil {
+		d.log.Error("cannot download: not logged in", "err", err)
+		_ = d.store.SetMeta(ctx, metaCurrentStage, store.StageIdle)
+		return
+	}
 	_ = d.store.SetMeta(ctx, metaCurrentStage, store.StageDownloading)
 
 	// Create a cancellable child context so DownloadStop can abort mid-batch.
