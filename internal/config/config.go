@@ -24,10 +24,9 @@ type Config struct {
 	Paths     Paths     `koanf:"paths"`
 	Sync      Sync      `koanf:"sync"`
 	Download  Download  `koanf:"download"`
-	Import    Import    `koanf:"import"`
+	Convert   Convert   `koanf:"convert"`
 	RateLimit RateLimit `koanf:"ratelimit"`
 	Tags      Tags      `koanf:"tags"`
-	Beets     Beets     `koanf:"beets"`
 	PostHooks []string  `koanf:"posthooks"`
 
 	// FixtureAlbums is populated from DEEBEETS_FIXTURE_ALBUMS (comma-separated
@@ -75,15 +74,28 @@ type Download struct {
 	Concurrency     int           `koanf:"concurrency"`
 	InterBatchDelay time.Duration `koanf:"inter_batch_delay"`
 	// Auto triggers the download stage automatically after each sync.
-	Auto      bool      `koanf:"auto"`
-	Favorites Favorites `koanf:"favorites"`
+	Auto      bool        `koanf:"auto"`
+	Favorites Favorites   `koanf:"favorites"`
 	Retry     RetryPolicy `koanf:"retry"`
 }
 
-// Import controls the post-download import stage.
-type Import struct {
-	// Auto triggers beet import against the full music_dir after each download run.
+// Convert controls the optional post-download ffmpeg conversion stage.
+type Convert struct {
+	// Enabled controls whether conversion runs at all.
+	Enabled bool `koanf:"enabled"`
+	// Auto triggers conversion automatically after each download run.
 	Auto bool `koanf:"auto"`
+	// Dest is the directory where converted files are written.
+	// Defaults to music_dir if empty (in-place, different extension).
+	Dest string `koanf:"dest"`
+	// Concurrency is the number of files converted in parallel.
+	Concurrency int `koanf:"concurrency"`
+	// Format is the target format name, e.g. "opus", "mp3".
+	Format string `koanf:"format"`
+	// FFmpegArgs is the ffmpeg command template for the target format.
+	// Use $source and $dest as placeholders.
+	// Defaults to a sensible opus command.
+	FFmpegArgs string `koanf:"ffmpeg_args"`
 }
 
 // RateLimit controls how the downloader backs off to avoid a ban.
@@ -103,18 +115,9 @@ type Tags struct {
 	NamingTemplate string   `koanf:"naming_template"`
 }
 
-// Beets controls the optional beets import stage.
-type Beets struct {
-	Enabled    bool     `koanf:"enabled"`
-	Binary     string   `koanf:"binary"`
-	ConfigPath string   `koanf:"config_path"`
-	Args       []string `koanf:"args"`
-	Concurrency int     `koanf:"concurrency"`
-}
-
 const (
-	EnvPrefix       = "DEEBEETS_"
-	EnvARL          = "DEEBEETS_ARL"
+	EnvPrefix        = "DEEBEETS_"
+	EnvARL           = "DEEBEETS_ARL"
 	EnvFixtureAlbums = "DEEBEETS_FIXTURE_ALBUMS"
 )
 
@@ -128,21 +131,26 @@ func Defaults() map[string]any {
 		"paths.db_path":     "./deebeets.db",
 		"paths.socket_path": "./deebeets.sock",
 
-		"sync.interval":            "0s",
-		"sync.retry.max_attempts":  3,
-		"sync.retry.backoff":       "10s",
+		"sync.interval":           "0s",
+		"sync.retry.max_attempts": 3,
+		"sync.retry.backoff":      "10s",
 
-		"download.concurrency":          3,
-		"download.inter_batch_delay":    "0s",
-		"download.auto":                 false,
-		"download.favorites.albums":     false,
-		"download.favorites.artists":    false,
-		"download.favorites.playlists":  false,
-		"download.favorites.tracks":     true,
-		"download.retry.max_attempts":   3,
-		"download.retry.backoff":        "5s",
+		"download.concurrency":         3,
+		"download.inter_batch_delay":   "0s",
+		"download.auto":                false,
+		"download.favorites.albums":    false,
+		"download.favorites.artists":   false,
+		"download.favorites.playlists": false,
+		"download.favorites.tracks":    true,
+		"download.retry.max_attempts":  3,
+		"download.retry.backoff":       "5s",
 
-		"import.auto": false,
+		"convert.enabled":     false,
+		"convert.auto":        false,
+		"convert.dest":        "",
+		"convert.concurrency": 2,
+		"convert.format":      "opus",
+		"convert.ffmpeg_args": "ffmpeg -i $source -y -vn -c:a libopus -b:a 160k -vbr on -compression_level 10 $dest",
 
 		"ratelimit.cooldown": "30s",
 		"ratelimit.max_hits": 5,
@@ -156,12 +164,6 @@ func Defaults() map[string]any {
 			"copyright", "bpm", "replaygain", "comment", "lyrics", "cover",
 		},
 		"tags.naming_template": `{{.AlbumArtist}}/{{.Album}}{{if .Year}} ({{.Year}}){{end}}/{{if .MultiDisc}}{{.Disc}}-{{end}}{{printf "%02d" .Track}} {{.Title}}.{{.Ext}}`,
-
-		"beets.enabled":      false,
-		"beets.binary":       "beet",
-		"beets.config_path":  "",
-		"beets.args":         []string{"import", "-q"},
-		"beets.concurrency":  1,
 
 		"posthooks": []string{},
 	}
@@ -252,8 +254,8 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("deezer.format_priority: unknown format %q", f)
 		}
 	}
-	if c.Beets.Concurrency < 1 {
-		return fmt.Errorf("beets.concurrency must be >= 1")
+	if c.Convert.Enabled && c.Convert.Concurrency < 1 {
+		return fmt.Errorf("convert.concurrency must be >= 1")
 	}
 	if c.Tags.NamingTemplate == "" {
 		return fmt.Errorf("tags.naming_template must be set")

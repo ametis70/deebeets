@@ -18,7 +18,6 @@ socket_path = "./deebeets.sock"
 [sync]
 # How often the daemon automatically syncs your Deezer favorites.
 # Set to 0 to disable automatic syncing (use `deebeets sync start` manually).
-# Examples: "1h", "6h", "24h"
 interval = "0s"
 
 [sync.retry]
@@ -46,10 +45,19 @@ tracks    = true
 max_attempts = 3
 backoff      = "5s"
 
-[import]
-# Automatically run `beet import` against the full music_dir after each
-# download run completes.
-auto = false
+[convert]
+# Enable ffmpeg conversion of downloaded files.
+enabled = false
+# Automatically run conversion after each download run.
+auto    = false
+# Destination directory for converted files. Defaults to music_dir if empty.
+dest    = ""
+# Number of files converted in parallel.
+concurrency = 2
+# Target format name (used for output file extension).
+format  = "opus"
+# ffmpeg command template. Use $source and $dest as placeholders.
+ffmpeg_args = "ffmpeg -i $source -y -vn -c:a libopus -b:a 160k -vbr on -compression_level 10 $dest"
 
 [ratelimit]
 # Base backoff after a rate-limit hit (grows exponentially per hit).
@@ -61,7 +69,7 @@ window   = "5m"
 backoff  = "10m"
 
 [tags]
-# Baseline tags deebeets writes before beets runs. beets remains canonical.
+# Baseline tags deebeets writes to downloaded files.
 fields = [
   "title", "artist", "albumartist", "album",
   "tracknumber", "totaltracks", "discnumber", "disctotal",
@@ -73,14 +81,5 @@ fields = [
 # Disc, TotalDiscs, MultiDisc, Ext.
 naming_template = "{{.AlbumArtist}}/{{.Album}}{{if .Year}} ({{.Year}}){{end}}/{{if .MultiDisc}}{{.Disc}}-{{end}}{{printf \"%02d\" .Track}} {{.Title}}.{{.Ext}}"
 
-[beets]
-enabled     = false
-binary      = "beet"
-# Path to a beets config; empty uses beets' own default.
-config_path = ""
-args        = ["import", "-q"]
-# Keep at 1 to serialize beets and avoid library-db lock contention.
-concurrency = 1
-
-# Commands run after a successful import. Each string is run via the shell.
+# Commands run after a successful convert run. Each string is run via the shell.
 posthooks = []
