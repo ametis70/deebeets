@@ -152,7 +152,7 @@ func Defaults() map[string]any {
 		"tags.fields": []string{
 			"title", "artist", "albumartist", "album",
 			"tracknumber", "totaltracks", "discnumber", "disctotal",
-			"date", "genre", "composer", "isrc", "barcode",
+			"date", "genre", "label", "composer", "isrc", "barcode",
 			"copyright", "bpm", "replaygain", "comment", "lyrics", "cover",
 		},
 		"tags.naming_template": `{{.AlbumArtist}}/{{.Album}}{{if .Year}} ({{.Year}}){{end}}/{{if .MultiDisc}}{{.Disc}}-{{end}}{{printf "%02d" .Track}} {{.Title}}.{{.Ext}}`,

@@ -65,7 +65,7 @@ backoff  = "10m"
 fields = [
   "title", "artist", "albumartist", "album",
   "tracknumber", "totaltracks", "discnumber", "disctotal",
-  "date", "genre", "composer", "isrc", "barcode",
+  "date", "genre", "label", "composer", "isrc", "barcode",
   "copyright", "bpm", "replaygain", "comment", "lyrics", "cover",
 ]
 # Go text/template producing the file path relative to music_dir.
