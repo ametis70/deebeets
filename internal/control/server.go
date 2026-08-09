@@ -45,7 +45,7 @@ func (s *Server) Listen() error {
 	mux.HandleFunc("GET /blocklist", s.handleBlocklistList)
 	mux.HandleFunc("POST /blocklist", s.handleBlocklistAdd)
 	mux.HandleFunc("DELETE /blocklist", s.handleBlocklistRemove)
-	mux.HandleFunc("POST /beets/import", s.handleBeetsImport)
+	mux.HandleFunc("POST /convert/start", s.handleConvertStart)
 	mux.HandleFunc("GET /items", s.handleItems)
 	s.httpServer = &http.Server{Handler: mux}
 	return nil
@@ -201,12 +201,12 @@ func (s *Server) handleBlocklistList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, blocks)
 }
 
-func (s *Server) handleBeetsImport(w http.ResponseWriter, r *http.Request) {
-	if err := s.ctrl.BeetsImport(r.Context()); err != nil {
+func (s *Server) handleConvertStart(w http.ResponseWriter, r *http.Request) {
+	if err := s.ctrl.ConvertStart(r.Context()); err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, APIResponse{OK: true, Message: "import triggered"})
+	writeJSON(w, http.StatusOK, APIResponse{OK: true, Message: "convert started"})
 }
 
 func (s *Server) handleItems(w http.ResponseWriter, r *http.Request) {

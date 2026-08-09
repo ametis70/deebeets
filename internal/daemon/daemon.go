@@ -10,7 +10,6 @@ import (
 	"syscall"
 	"time"
 
-	"deebeets/internal/beets"
 	"deebeets/internal/config"
 	"deebeets/internal/control"
 	"deebeets/internal/credentials"
@@ -19,15 +18,13 @@ import (
 	"deebeets/internal/store"
 )
 
-// compile-time check: the beets Runner satisfies the pipeline's Importer.
-var _ downloader.Importer = (*beets.Runner)(nil)
-
 // orchCmd is a signal sent to the orchestrator loop.
 type orchCmd int
 
 const (
 	orchSync     orchCmd = iota // run sync immediately
-	orchDownload                // run download immediately (with optional pre-enqueued ids)
+	orchDownload                // run download immediately
+	orchConvert                 // run convert immediately
 	orchStop                    // stop the active download run
 	orchSyncStop                // stop an in-progress sync
 )
@@ -37,18 +34,17 @@ const metaLastSync = "last_sync"
 
 // Daemon owns the pipeline and control server for the process lifetime.
 type Daemon struct {
-	cfg   *config.Config
-	log   *slog.Logger
+	cfg  *config.Config
+	log  *slog.Logger
 	store *store.Store
-	dz    *deezer.Client   // nil until connectDeezer succeeds
-	pipe  *downloader.Pipeline // nil until connectDeezer succeeds
-	imp   *beets.Runner
-	srv   *control.Server
+	dz   *deezer.Client      // nil until connectDeezer succeeds
+	pipe *downloader.Pipeline // nil until connectDeezer succeeds
+	srv  *control.Server
 
-	orchCh     chan orchCmd
-	stopDLCh   chan struct{} // closed to signal download abort
-	ctx        context.Context
-	cancel     context.CancelFunc
+	orchCh   chan orchCmd
+	stopDLCh chan struct{} // closed to signal download abort
+	ctx      context.Context
+	cancel   context.CancelFunc
 }
 
 // New builds a Daemon from config.
@@ -58,13 +54,10 @@ func New(cfg *config.Config, log *slog.Logger) (*Daemon, error) {
 		return nil, err
 	}
 
-	runner := beets.NewRunner(cfg.Beets, cfg.PostHooks, log)
-
 	d := &Daemon{
 		cfg:      cfg,
 		log:      log,
 		store:    st,
-		imp:      runner,
 		orchCh:   make(chan orchCmd, 4),
 		stopDLCh: make(chan struct{}),
 	}
@@ -81,12 +74,10 @@ func (d *Daemon) Run(parent context.Context) error {
 	d.ctx, d.cancel = ctx, cancel
 
 	// Best-effort: connect to Deezer if credentials are already stored.
-	// Failure is logged but does not prevent the daemon from starting.
 	if err := d.connectDeezer(ctx); err != nil {
 		d.log.Warn("deezer not connected (run `deebeets login`)", "err", err)
 	}
 
-	// Recover any downloads interrupted by a previous crash.
 	if n, err := d.store.RecoverInterrupted(ctx); err != nil {
 		return err
 	} else if n > 0 {
@@ -135,7 +126,7 @@ func (d *Daemon) Close() {
 // initialises the download pipeline. Idempotent: a no-op if already connected.
 func (d *Daemon) connectDeezer(ctx context.Context) error {
 	if d.pipe != nil {
-		return nil // already connected
+		return nil
 	}
 	arl, err := credentials.LoadARL(ctx, d.cfg.Deezer.ARL, d.store)
 	if err != nil {
@@ -154,26 +145,27 @@ func (d *Daemon) connectDeezer(ctx context.Context) error {
 	d.log.Info("logged in to deezer", "user_id", dz.UserID(),
 		"lossless", dz.CanStreamLossless(), "hq", dz.CanStreamHQ())
 	d.dz = dz
-	d.pipe = downloader.New(d.store, dz, d.cfg, d.imp, d.log)
+	d.pipe = downloader.New(d.store, dz, d.cfg, d.log)
 	return nil
 }
 
-// orchestrate is the single goroutine that sequences sync → download → import.
-// All stage transitions are persisted to meta so a crash can resume cleanly.
+// orchestrate sequences sync → download → convert → repeat.
 func (d *Daemon) orchestrate(ctx context.Context) {
-	// Resume from a prior interrupted stage if needed.
+	// Resume from a prior interrupted stage.
 	stage, _ := d.store.GetMeta(ctx, metaCurrentStage)
 	switch stage {
 	case store.StageDownloading:
 		d.log.Info("resuming interrupted download run")
 		d.runDownload(ctx)
-		return
+		if d.cfg.Convert.Auto {
+			d.runConvert(ctx)
+		}
 	case store.StageImporting:
-		d.log.Info("resuming interrupted import run")
-		d.runImport(ctx)
+		// Legacy stage name from before beets removal — treat as convert.
+		d.log.Info("resuming interrupted convert run")
+		d.runConvert(ctx)
 	}
 
-	// Normal loop: wait → sync → download → import → repeat.
 	for {
 		if ctx.Err() != nil {
 			return
@@ -181,7 +173,6 @@ func (d *Daemon) orchestrate(ctx context.Context) {
 		_ = d.store.SetMeta(ctx, metaCurrentStage, store.StageIdle)
 
 		if d.cfg.Sync.Interval <= 0 {
-			// No auto-sync: block until a manual command or shutdown.
 			select {
 			case cmd := <-d.orchCh:
 				d.handleOrchCmd(ctx, cmd)
@@ -191,14 +182,12 @@ func (d *Daemon) orchestrate(ctx context.Context) {
 			continue
 		}
 
-		// Wait for the poll interval or an incoming command.
 		timer := time.NewTimer(d.cfg.Sync.Interval)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
 			return
 		case <-timer.C:
-			// Interval elapsed: run sync.
 		case cmd := <-d.orchCh:
 			timer.Stop()
 			d.handleOrchCmd(ctx, cmd)
@@ -216,13 +205,13 @@ func (d *Daemon) handleOrchCmd(ctx context.Context, cmd orchCmd) {
 		d.runSyncThenDownload(ctx)
 	case orchDownload:
 		d.runDownload(ctx)
-		if d.cfg.Import.Auto {
-			d.runImport(ctx)
+		if d.cfg.Convert.Auto {
+			d.runConvert(ctx)
 		}
-	case orchStop:
-		// Handled inside runDownload via stopDLCh; nothing to do here.
-	case orchSyncStop:
-		// Sync is synchronous in runSync; stop is a no-op after it returns.
+	case orchConvert:
+		d.runConvert(ctx)
+	case orchStop, orchSyncStop:
+		// handled via stopDLCh / no-op
 	}
 }
 
@@ -234,8 +223,8 @@ func (d *Daemon) runSyncThenDownload(ctx context.Context) {
 		return
 	}
 	d.runDownload(ctx)
-	if d.cfg.Import.Auto {
-		d.runImport(ctx)
+	if d.cfg.Convert.Auto {
+		d.runConvert(ctx)
 	}
 }
 
@@ -297,11 +286,9 @@ func (d *Daemon) runDownload(ctx context.Context) {
 	}
 	_ = d.store.SetMeta(ctx, metaCurrentStage, store.StageDownloading)
 
-	// Create a cancellable child context so DownloadStop can abort mid-batch.
 	dlCtx, dlCancel := context.WithCancel(ctx)
 	defer dlCancel()
 
-	// Replace stopDLCh with a fresh one for this run.
 	stopCh := make(chan struct{})
 	d.stopDLCh = stopCh
 	go func() {
@@ -318,11 +305,14 @@ func (d *Daemon) runDownload(ctx context.Context) {
 	_ = d.store.SetMeta(ctx, metaCurrentStage, store.StageIdle)
 }
 
-// runImport runs a full-library import.
-func (d *Daemon) runImport(ctx context.Context) {
-	_ = d.store.SetMeta(ctx, metaCurrentStage, store.StageImporting)
-	if err := d.pipe.RunImport(ctx); err != nil {
-		d.log.Error("import run error", "err", err)
+// runConvert runs a full convert pass over downloaded files.
+func (d *Daemon) runConvert(ctx context.Context) {
+	if d.pipe == nil || !d.cfg.Convert.Enabled {
+		return
+	}
+	_ = d.store.SetMeta(ctx, metaCurrentStage, store.StageImporting) // reuse stage key
+	if err := d.pipe.RunConvert(ctx); err != nil {
+		d.log.Error("convert run error", "err", err)
 	}
 	_ = d.store.SetMeta(ctx, metaCurrentStage, store.StageIdle)
 }

@@ -28,8 +28,8 @@ type Controller interface {
 	BlocklistRemove(ctx context.Context, kind string, ids []int64) error
 	BlocklistList(ctx context.Context) ([]store.Block, error)
 
-	// BeetsImport triggers a manual full-library import run.
-	BeetsImport(ctx context.Context) error
+	// ConvertStart triggers a manual convert run.
+	ConvertStart(ctx context.Context) error
 
 	Items(ctx context.Context, states []string, limit int) ([]store.Item, error)
 }

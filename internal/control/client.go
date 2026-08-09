@@ -131,9 +131,9 @@ func (c *Client) BlocklistList(ctx context.Context) ([]store.Block, error) {
 	return out, err
 }
 
-// BeetsImport triggers a manual full-library import run.
-func (c *Client) BeetsImport(ctx context.Context) error {
-	return c.do(ctx, http.MethodPost, "/beets/import", nil, nil)
+// ConvertStart triggers a manual convert run.
+func (c *Client) ConvertStart(ctx context.Context) error {
+	return c.do(ctx, http.MethodPost, "/convert/start", nil, nil)
 }
 
 // Items lists items in the given states.

@@ -11,16 +11,16 @@ import (
 
 // fakeController records calls and returns canned data.
 type fakeController struct {
-	syncStarted  bool
-	syncStopped  bool
-	dlStarted    bool
-	dlStopped    bool
-	lastKind     string
-	lastIDs      []int64
-	lastMode     string
-	blocked      []store.Block
-	syncSel      Selection
-	importCalled bool
+	syncStarted    bool
+	syncStopped    bool
+	dlStarted      bool
+	dlStopped      bool
+	convertStarted bool
+	lastKind       string
+	lastIDs        []int64
+	lastMode       string
+	blocked        []store.Block
+	syncSel        Selection
 }
 
 func (f *fakeController) Status(context.Context) (StatusResponse, error) {
@@ -36,6 +36,10 @@ func (f *fakeController) DownloadStart(_ context.Context, kind string, ids []int
 	return nil
 }
 func (f *fakeController) DownloadStop(context.Context) error { f.dlStopped = true; return nil }
+func (f *fakeController) ConvertStart(context.Context) error {
+	f.convertStarted = true
+	return nil
+}
 func (f *fakeController) Redownload(_ context.Context, mode string, ids []int64) (int, error) {
 	f.lastMode, f.lastIDs = mode, ids
 	return 7, nil
@@ -46,10 +50,6 @@ func (f *fakeController) BlocklistAdd(_ context.Context, kind string, ids []int6
 }
 func (f *fakeController) BlocklistRemove(context.Context, string, []int64) error { return nil }
 func (f *fakeController) BlocklistList(context.Context) ([]store.Block, error)   { return f.blocked, nil }
-func (f *fakeController) BeetsImport(context.Context) error {
-	f.importCalled = true
-	return nil
-}
 func (f *fakeController) Items(context.Context, []string, int) ([]store.Item, error) {
 	return []store.Item{{SngID: 1, State: "finished", Title: "T"}}, nil
 }
@@ -113,6 +113,10 @@ func TestControlRoundTrip(t *testing.T) {
 		t.Fatal("download stop not forwarded")
 	}
 
+	if err := c.ConvertStart(ctx); err != nil || !fc.convertStarted {
+		t.Fatalf("convert start err=%v called=%v", err, fc.convertStarted)
+	}
+
 	if n, err := c.Redownload(ctx, "failed", nil); err != nil || n != 7 {
 		t.Fatalf("redownload n=%d err=%v", n, err)
 	}
@@ -126,10 +130,6 @@ func TestControlRoundTrip(t *testing.T) {
 	blocks, err := c.BlocklistList(ctx)
 	if err != nil || len(blocks) != 1 || blocks[0].ExtID != 99 {
 		t.Fatalf("blocklist = %+v err=%v", blocks, err)
-	}
-
-	if err := c.BeetsImport(ctx); err != nil || !fc.importCalled {
-		t.Fatalf("beets import err=%v called=%v", err, fc.importCalled)
 	}
 
 	items, err := c.Items(ctx, []string{"finished"})
