@@ -1,25 +1,17 @@
 # E2E stack: deebeets + Navidrome
 #
-# Usage:
-#   cp .env.example .env          # fill in DEEBEETS_ARL
-#   docker compose up --build
+# First-time setup:
+#   docker compose up --build -d
+#   docker compose exec deebeets deebeets login
+#   docker compose exec deebeets deebeets sync start
 #
-# deebeets will:
-#   1. Download the albums listed in DEEBEETS_FIXTURE_ALBUMS from Deezer
-#   2. Tag files and run `beet import -q` on each album directory
-#   3. Leave the organised library under the shared music volume
-#
-# Navidrome picks up the library and streams it at http://localhost:4533
+# Then open http://localhost:4533
 
 services:
   deebeets:
     build: .
-    env_file: .env
     environment:
       DEEBEETS_FIXTURE_ALBUMS: "57783852,796709881,502723"
-    # DEEBEETS_ARL comes from .env. All other config is in config.docker.toml,
-    # which is the only reliable way to set keys that contain underscores (e.g.
-    # music_dir, config_path) — the generic env mapper turns every _ into a dot.
     command: ["daemon", "--config", "/config/config.docker.toml"]
     volumes:
       - ./config.docker.toml:/config/config.docker.toml:ro
