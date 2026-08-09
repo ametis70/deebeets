@@ -45,7 +45,7 @@ backoff  = "10m"
 fields = [
   "title", "artist", "albumartist", "album",
   "tracknumber", "totaltracks", "discnumber", "disctotal",
-  "date", "genre", "composer", "isrc", "barcode",
+  "date", "genre", "label", "composer", "isrc", "barcode",
   "copyright", "bpm", "replaygain", "comment", "lyrics", "cover",
 ]
 naming_template = "{{.AlbumArtist}}/{{.Album}}{{if .Year}} ({{.Year}}){{end}}/{{if .MultiDisc}}{{.Disc}}-{{end}}{{printf \"%02d\" .Track}} {{.Title}}.{{.Ext}}"
@@ -57,4 +57,6 @@ config_path = "/config/beets/config.yaml"
 args        = ["import", "-q"]
 concurrency = 1
 
-posthooks = []
+posthooks = [
+  "python3 /config/scripts/fix-opus-artists.py",
+]
