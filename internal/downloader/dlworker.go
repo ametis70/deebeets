@@ -8,46 +8,46 @@ import (
 	"path/filepath"
 	"strings"
 
+	"deebeets/internal/converter"
 	"deebeets/internal/deezer"
 	"deebeets/internal/store"
 	"deebeets/internal/tagger"
 )
 
-// downloadOne attempts a single download of the given item. On success the item
-// is moved to state=downloaded. On failure the error is returned to the caller
-// (RunDownloads handles rate-limit vs regular failure classification).
-func (p *Pipeline) downloadOne(ctx context.Context, item *store.Item) error {
-	err := p.attemptDownload(ctx, item)
+// downloadOne attempts a single download. Returns a ConvertJob (non-nil on
+// success with converter enabled) and any error.
+func (p *Pipeline) downloadOne(ctx context.Context, item *store.Item) (*converter.ConvertJob, error) {
+	job, err := p.attemptDownload(ctx, item)
 	if err == nil {
 		p.logCompletion(ctx, item)
-		return nil
 	}
-	return err
+	return job, err
 }
 
-// attemptDownload performs one download attempt end to end.
-func (p *Pipeline) attemptDownload(ctx context.Context, item *store.Item) error {
+// attemptDownload performs one download attempt end to end. Returns a
+// ConvertJob with the source path and metadata if conversion is enabled.
+func (p *Pipeline) attemptDownload(ctx context.Context, item *store.Item) (*converter.ConvertJob, error) {
 	p.log.Info("downloading", "sng_id", item.SngID, "title", item.Title, "artist", item.Artist)
 
 	track, err := p.dz.GetTrack(ctx, item.SngID)
 	if err != nil {
-		return fmt.Errorf("get track: %w", err)
+		return nil, fmt.Errorf("get track: %w", err)
 	}
 	resolved, err := p.dz.ResolveDownload(ctx, track, p.cfg.Deezer.FormatPriority)
 	if err != nil {
-		return fmt.Errorf("resolve: %w", err)
+		return nil, fmt.Errorf("resolve: %w", err)
 	}
 
 	ext := tagger.ExtForFormat(resolved.Format)
 	rel, err := tagger.RenderPath(p.cfg.Tags.NamingTemplate, buildNameData(track, ext))
 	if err != nil {
-		return fmt.Errorf("render path: %w", err)
+		return nil, fmt.Errorf("render path: %w", err)
 	}
 	finalPath := filepath.Join(p.musicDir, rel)
 
 	tmp, err := p.streamToTemp(ctx, item.SngID, resolved.URL)
 	if err != nil {
-		return fmt.Errorf("stream: %w", err)
+		return nil, fmt.Errorf("stream: %w", err)
 	}
 
 	// Fetch album metadata (total tracks/discs, label, genre).
@@ -70,7 +70,7 @@ func (p *Pipeline) attemptDownload(ctx context.Context, item *store.Item) error 
 		}
 	}
 
-	md := p.buildMetadata(ctx, track, album, lyrics, resolved.Format)
+	md := p.buildMetadata(ctx, track, album, lyrics)
 
 	if err := tagger.Write(tmp, resolved.Format, md, p.fields); err != nil {
 		p.log.Warn("tagging failed", "sng_id", item.SngID, "err", err)
@@ -79,25 +79,19 @@ func (p *Pipeline) attemptDownload(ctx context.Context, item *store.Item) error 
 	albumDir := filepath.Dir(finalPath)
 	if err := os.MkdirAll(albumDir, 0o755); err != nil {
 		_ = os.Remove(tmp)
-		return fmt.Errorf("mkdir: %w", err)
+		return nil, fmt.Errorf("mkdir: %w", err)
 	}
 	if err := os.Rename(tmp, finalPath); err != nil {
 		_ = os.Remove(tmp)
-		return fmt.Errorf("move into place: %w", err)
+		return nil, fmt.Errorf("move into place: %w", err)
 	}
 
 	// Write cover.jpg alongside the tracks if not already present.
-	if len(md.Cover) > 0 {
-		coverPath := filepath.Join(albumDir, "cover.jpg")
-		if _, err := os.Stat(coverPath); os.IsNotExist(err) {
-			if err := os.WriteFile(coverPath, md.Cover, 0o644); err != nil {
-				p.log.Warn("failed to write cover.jpg", "path", coverPath, "err", err)
-			}
-		}
+	if err := tagger.WriteCoverFile(albumDir, md.Cover); err != nil {
+		p.log.Warn("failed to write cover.jpg", "path", albumDir, "err", err)
 	}
 
-	// Write folder.jpg in the artist directory if not already present.
-	// Navidrome uses this as the artist image.
+	// Write folder.jpg in the artist directory for Navidrome artist image.
 	if p.fields["cover"] {
 		artistDir := filepath.Dir(albumDir)
 		folderPath := filepath.Join(artistDir, "folder.jpg")
@@ -122,15 +116,19 @@ func (p *Pipeline) attemptDownload(ctx context.Context, item *store.Item) error 
 
 	p.gate.clear()
 	if err := p.store.MarkDownloaded(ctx, item.SngID, resolved.Format, rel); err != nil {
-		return err
+		return nil, err
 	}
 	p.log.Info("downloaded", "sng_id", item.SngID, "title", item.Title,
 		"format", resolved.Format, "path", rel)
-	return nil
+
+	// Return a convert job if conversion is enabled.
+	if p.conv != nil {
+		return &converter.ConvertJob{SourcePath: finalPath, Metadata: md}, nil
+	}
+	return nil, nil
 }
 
-// streamToTemp downloads and decrypts a track into a temp file. If the context
-// is cancelled mid-stream, the partial file is deleted before returning.
+// streamToTemp downloads and decrypts a track into a temp file.
 func (p *Pipeline) streamToTemp(ctx context.Context, sngID int64, url string) (string, error) {
 	if err := os.MkdirAll(p.incompleteDir, 0o755); err != nil {
 		return "", err
@@ -201,7 +199,7 @@ func (p *Pipeline) logCompletion(ctx context.Context, item *store.Item) {
 	p.log.Info(item.SourceType+" complete", "source_id", item.SourceID, "tracks", stotal)
 }
 
-func (p *Pipeline) buildMetadata(ctx context.Context, t *deezer.GWTrack, album *deezer.GWAlbum, lyrics *deezer.GWLyrics, format string) tagger.Metadata {
+func (p *Pipeline) buildMetadata(ctx context.Context, t *deezer.GWTrack, album *deezer.GWAlbum, lyrics *deezer.GWLyrics) tagger.Metadata {
 	md := tagger.Metadata{
 		Title:        t.SngTitle,
 		Artist:       t.ArtistString(),

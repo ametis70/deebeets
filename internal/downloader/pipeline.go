@@ -1,6 +1,6 @@
 // Package downloader implements the two-stage pipeline: a one-shot download
 // run that drains the queue with batch-level retries, followed by an optional
-// one-shot import run that calls beet import against the full music library.
+// one-shot convert run that transcodes downloaded files via ffmpeg.
 package downloader
 
 import (
@@ -13,29 +13,24 @@ import (
 	"time"
 
 	"deebeets/internal/config"
+	"deebeets/internal/converter"
 	"deebeets/internal/deezer"
 	"deebeets/internal/store"
 	"deebeets/internal/tagger"
 )
-
-// Importer runs the post-download import step (beets + post-hooks) against the
-// full music library directory.
-type Importer interface {
-	Import(ctx context.Context, musicDir string) error
-}
 
 // Daemon status meta keys/values.
 const (
 	MetaRateLimitUntil = "rate_limit_until"
 )
 
-// Pipeline orchestrates the download and import runs over the store.
+// Pipeline orchestrates the download and convert runs over the store.
 type Pipeline struct {
 	store    *store.Store
 	dz       *deezer.Client
 	cfg      *config.Config
 	fields   tagger.FieldSet
-	importer Importer
+	conv     *converter.Runner // nil if convert disabled
 	log      *slog.Logger
 
 	musicDir      string
@@ -43,17 +38,21 @@ type Pipeline struct {
 
 	gate *rateGate
 
-	importRunning atomic.Bool
+	convertRunning atomic.Bool
 }
 
-// New builds a Pipeline. importer may be nil when no import work is configured.
-func New(st *store.Store, dz *deezer.Client, cfg *config.Config, importer Importer, log *slog.Logger) *Pipeline {
+// New builds a Pipeline.
+func New(st *store.Store, dz *deezer.Client, cfg *config.Config, log *slog.Logger) *Pipeline {
+	var conv *converter.Runner
+	if cfg.Convert.Enabled {
+		conv = converter.New(cfg.Convert, cfg.Paths.MusicDir, log)
+	}
 	return &Pipeline{
 		store:         st,
 		dz:            dz,
 		cfg:           cfg,
 		fields:        tagger.NewFieldSet(cfg.Tags.Fields),
-		importer:      importer,
+		conv:          conv,
 		log:           log,
 		musicDir:      cfg.Paths.MusicDir,
 		incompleteDir: filepath.Join(cfg.Paths.MusicDir, ".deebeets-incomplete"),
@@ -98,13 +97,11 @@ func (p *Pipeline) RunDownloads(ctx context.Context) error {
 				return err
 			}
 			if len(failed) == 0 {
-				// Nothing left to do.
 				return nil
 			}
 
 			batchPass++
 			if batchPass > p.cfg.Download.Retry.MaxAttempts {
-				// Permanently fail everything still in the failed batch.
 				ids := itemIDs(failed)
 				p.log.Warn("batch retry exhausted: marking permanently failed", "count", len(ids))
 				for _, it := range failed {
@@ -118,7 +115,6 @@ func (p *Pipeline) RunDownloads(ctx context.Context) error {
 			if err := p.store.RequeueFailedBatch(ctx, ids); err != nil {
 				return err
 			}
-			// Sleep the configured backoff before the retry pass.
 			if !sleepCtx(ctx, p.cfg.Download.Retry.Backoff) {
 				return ctx.Err()
 			}
@@ -129,6 +125,7 @@ func (p *Pipeline) RunDownloads(ctx context.Context) error {
 		type result struct {
 			item *store.Item
 			err  error
+			job  *converter.ConvertJob // non-nil on success, for conversion
 		}
 		results := make([]result, len(batch))
 		var wg sync.WaitGroup
@@ -136,20 +133,25 @@ func (p *Pipeline) RunDownloads(ctx context.Context) error {
 			wg.Add(1)
 			go func(idx int, item *store.Item) {
 				defer wg.Done()
-				results[idx] = result{item: item, err: p.downloadOne(ctx, item)}
+				job, err := p.downloadOne(ctx, item)
+				results[idx] = result{item: item, err: err, job: job}
 			}(i, it)
 		}
 		wg.Wait()
 
-		// Process results: successes, rate limits, and failures.
+		// Process results.
 		var failedIDs []int64
 		var failedErrs []string
+		var convertJobs []converter.ConvertJob
+
 		for _, r := range results {
 			if r.err == nil {
+				if r.job != nil {
+					convertJobs = append(convertJobs, *r.job)
+				}
 				continue
 			}
 			if deezer.IsRateLimited(r.err) {
-				// Return to queue; the gate will be hit next iteration.
 				_ = p.store.SetState(ctx, r.item.SngID, store.StateQueued)
 				wait, hard := p.gate.hit()
 				if hard {
@@ -165,9 +167,15 @@ func (p *Pipeline) RunDownloads(ctx context.Context) error {
 			failedErrs = append(failedErrs, r.err.Error())
 		}
 
-		// Mark all failures as in-failed-batch in one pass.
 		for i, id := range failedIDs {
 			_ = p.store.MarkInFailedBatch(ctx, []int64{id}, store.StageDownload, failedErrs[i])
+		}
+
+		// Convert successful downloads immediately if converter is enabled.
+		if p.conv != nil && len(convertJobs) > 0 {
+			if err := p.conv.RunAll(ctx, convertJobs); err != nil {
+				p.log.Error("batch conversion errors", "err", err)
+			}
 		}
 
 		if d := p.cfg.Download.InterBatchDelay; d > 0 {
@@ -178,25 +186,50 @@ func (p *Pipeline) RunDownloads(ctx context.Context) error {
 	}
 }
 
-// RunImport runs beet import against the full music directory. It is a no-op
-// if no importer is configured. It guards against concurrent runs.
-func (p *Pipeline) RunImport(ctx context.Context) error {
-	if p.importer == nil {
+// RunConvert converts all downloaded files that don't yet have a converted copy.
+// Used for manual `deebeets convert start` and on-demand re-conversion.
+// Guards against concurrent runs.
+func (p *Pipeline) RunConvert(ctx context.Context) error {
+	if p.conv == nil {
 		return nil
 	}
-	if !p.importRunning.CompareAndSwap(false, true) {
-		p.log.Warn("import already running; skipping concurrent trigger")
+	if !p.convertRunning.CompareAndSwap(false, true) {
+		p.log.Warn("convert already running; skipping concurrent trigger")
 		return nil
 	}
-	defer p.importRunning.Store(false)
+	defer p.convertRunning.Store(false)
 
-	p.log.Info("starting import", "music_dir", p.musicDir)
-	if err := p.importer.Import(ctx, p.musicDir); err != nil {
-		p.log.Error("import failed", "err", err)
+	items, err := p.store.FinishedItems(ctx)
+	if err != nil {
 		return err
 	}
-	p.log.Info("import complete")
-	return p.store.MarkAllDownloadedFinished(ctx)
+
+	var jobs []converter.ConvertJob
+	for _, it := range items {
+		if it.FilePath == "" {
+			continue
+		}
+		srcPath := filepath.Join(p.musicDir, it.FilePath)
+		if _, err := os.Stat(srcPath); err != nil {
+			continue
+		}
+		// Check if converted file already exists.
+		outPath, err := p.conv.OutputPath(srcPath)
+		if err != nil || outPath == "" {
+			continue
+		}
+		if _, err := os.Stat(outPath); err == nil {
+			continue // already converted
+		}
+		jobs = append(jobs, converter.ConvertJob{SourcePath: srcPath})
+	}
+
+	if len(jobs) == 0 {
+		p.log.Info("convert: nothing to do")
+		return nil
+	}
+	p.log.Info("starting convert run", "count", len(jobs))
+	return p.conv.RunAll(ctx, jobs)
 }
 
 // claimBatch claims up to Concurrency tracks for this batch.
@@ -217,8 +250,7 @@ func (p *Pipeline) claimBatch(ctx context.Context) []*store.Item {
 	return batch
 }
 
-// waitRateLimit checks the persisted rate_limit_until meta key and sleeps if
-// a prior run was rate limited and hasn't expired yet.
+// waitRateLimit checks the persisted rate_limit_until meta key and sleeps if needed.
 func (p *Pipeline) waitRateLimit(ctx context.Context) error {
 	raw, _ := p.store.GetMeta(ctx, MetaRateLimitUntil)
 	if raw == "" {
@@ -248,7 +280,6 @@ func (p *Pipeline) persistRateLimitUntil(ctx context.Context, t time.Time) {
 }
 
 // CleanIncomplete deletes any orphaned partial files in the incomplete dir.
-// Called on startup after RecoverInterrupted.
 func (p *Pipeline) CleanIncomplete() {
 	entries, err := os.ReadDir(p.incompleteDir)
 	if err != nil {
@@ -261,7 +292,6 @@ func (p *Pipeline) CleanIncomplete() {
 	}
 }
 
-// sleepCtx sleeps for d or until ctx is cancelled. Returns false if cancelled.
 func sleepCtx(ctx context.Context, d time.Duration) bool {
 	t := time.NewTimer(d)
 	defer t.Stop()

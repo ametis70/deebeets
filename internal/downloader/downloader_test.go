@@ -2,7 +2,6 @@ package downloader
 
 import (
 	"context"
-	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -13,6 +12,7 @@ import (
 	"deebeets/internal/config"
 	"deebeets/internal/store"
 )
+
 func testPipeline(t *testing.T) (*Pipeline, *store.Store, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -29,7 +29,7 @@ func testPipeline(t *testing.T) (*Pipeline, *store.Store, string) {
 	cfg.Paths.MusicDir = filepath.Join(dir, "music")
 	os.MkdirAll(cfg.Paths.MusicDir, 0o755)
 
-	p := New(st, nil, cfg, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	p := New(st, nil, cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	return p, st, cfg.Paths.MusicDir
 }
 
@@ -93,83 +93,12 @@ func TestRateGate(t *testing.T) {
 	if w2 != 20*time.Millisecond {
 		t.Fatalf("hit2 wait=%v, want exponential 20ms", w2)
 	}
-	_, hard = g.hit() // 3rd hit within window -> hard stop
+	_, hard = g.hit()
 	if !hard {
 		t.Fatal("expected hard stop at max_hits")
 	}
 	if _, h := g.blockedFor(); !h {
 		t.Fatal("blockedFor should report hard stop")
-	}
-}
-
-// fakeImporter records Import calls.
-type fakeImporter struct {
-	called  int
-	musicDir string
-}
-
-func (f *fakeImporter) Import(_ context.Context, musicDir string) error {
-	f.called++
-	f.musicDir = musicDir
-	return nil
-}
-
-func TestRunImportGuardsConcurrentRuns(t *testing.T) {
-	dir := t.TempDir()
-	st, err := store.Open(filepath.Join(dir, "t.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-
-	cfg, _ := config.Load("")
-	cfg.Paths.MusicDir = filepath.Join(dir, "music")
-	os.MkdirAll(cfg.Paths.MusicDir, 0o755)
-
-	imp := &fakeImporter{}
-	p := New(st, nil, cfg, imp, slog.New(slog.NewTextHandler(io.Discard, nil)))
-
-	// First call should run.
-	if err := p.RunImport(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if imp.called != 1 {
-		t.Fatalf("expected 1 import call, got %d", imp.called)
-	}
-	if imp.musicDir != cfg.Paths.MusicDir {
-		t.Fatalf("import received wrong dir: %q", imp.musicDir)
-	}
-}
-
-// errImporter always fails.
-type errImporter struct{ err error }
-
-func (e *errImporter) Import(context.Context, string) error { return e.err }
-
-func TestRunImportErrorDoesNotMarkFinished(t *testing.T) {
-	dir := t.TempDir()
-	st, _ := store.Open(filepath.Join(dir, "t.db"))
-	defer st.Close()
-
-	ctx := context.Background()
-	st.Upsert(ctx, store.Discovered{SngID: 1})
-	st.ClaimDownload(ctx)
-	st.MarkDownloaded(ctx, 1, "FLAC", "f.flac")
-
-	cfg, _ := config.Load("")
-	cfg.Paths.MusicDir = filepath.Join(dir, "music")
-	os.MkdirAll(cfg.Paths.MusicDir, 0o755)
-
-	p := New(st, nil, cfg, &errImporter{err: errors.New("beets crashed")},
-		slog.New(slog.NewTextHandler(io.Discard, nil)))
-
-	// RunImport should return the error but not change item states.
-	if err := p.RunImport(ctx); err == nil {
-		t.Fatal("expected error from importer")
-	}
-	it, _ := st.Get(ctx, 1)
-	if it.State != store.StateDownloaded {
-		t.Fatalf("state = %q, want downloaded (import error must not mark finished)", it.State)
 	}
 }
 
@@ -180,21 +109,17 @@ func TestRunDownloadsBatchRetry(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Simulate the state after a download run where 2 items failed:
-	// they are in the failed batch with batch_attempts=0.
 	for _, id := range []int64{1, 2} {
 		st.Upsert(ctx, store.Discovered{SngID: id, Title: "T"})
 		st.ClaimDownload(ctx)
 		st.MarkInFailedBatch(ctx, []int64{id}, store.StageDownload, "timeout")
 	}
 
-	// Verify ClaimFailedBatch returns them.
 	failed, err := st.ClaimFailedBatch(ctx)
 	if err != nil || len(failed) != 2 {
 		t.Fatalf("expected 2 failed-batch items, got %d err=%v", len(failed), err)
 	}
 
-	// One batch retry pass: requeue them.
 	ids := []int64{1, 2}
 	if err := st.RequeueFailedBatch(ctx, ids); err != nil {
 		t.Fatal(err)
@@ -205,10 +130,7 @@ func TestRunDownloadsBatchRetry(t *testing.T) {
 			it1.State, it1.BatchAttempts, it1.InFailedBatch)
 	}
 
-	// Fail them again.
 	st.MarkInFailedBatch(ctx, ids, store.StageDownload, "still failing")
-
-	// Permanently mark them (max_attempts=1 exhausted).
 	for _, id := range ids {
 		it, _ := st.Get(ctx, id)
 		st.MarkFailed(ctx, it.SngID, store.StageDownload, it.Error)
@@ -223,7 +145,6 @@ func TestRunDownloadsBatchRetry(t *testing.T) {
 		t.Fatalf("item 2 permanently failed: state=%q in_failed=%v", it2.State, it2.InFailedBatch)
 	}
 
-	// RequeueAllFailed resets everything for a manual retry.
 	n, err := st.RequeueAllFailed(ctx)
 	if err != nil || n != 2 {
 		t.Fatalf("RequeueAllFailed n=%d err=%v", n, err)
@@ -243,9 +164,8 @@ func TestRunDownloadsStopDeletesTempFile(t *testing.T) {
 	cfg.Paths.MusicDir = filepath.Join(dir, "music")
 	os.MkdirAll(cfg.Paths.MusicDir, 0o755)
 
-	p := New(st, nil, cfg, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	p := New(st, nil, cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	// Write a fake temp file in incompleteDir.
 	os.MkdirAll(p.incompleteDir, 0o755)
 	tmpFile := filepath.Join(p.incompleteDir, "42.part")
 	os.WriteFile(tmpFile, []byte("partial"), 0o644)
