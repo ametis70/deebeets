@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strconv"
 
 	"github.com/spf13/cobra"
@@ -36,6 +37,23 @@ func rootCmd() *cobra.Command {
 		Short:         "Sync and download your Deezer favorites for Navidrome",
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			// If beets.config_path is set and BEETSDIR is not already in the
+			// environment, point BEETSDIR at its directory so every `beet`
+			// invocation — including ones the user runs directly — picks up
+			// the right config without needing -c.
+			if os.Getenv("BEETSDIR") != "" {
+				return nil
+			}
+			cfg, err := config.Load(cfgPath)
+			if err != nil {
+				return nil // config errors are caught later by the actual command
+			}
+			if cfg.Beets.ConfigPath != "" {
+				os.Setenv("BEETSDIR", filepath.Dir(cfg.Beets.ConfigPath))
+			}
+			return nil
+		},
 	}
 	def := os.Getenv("DEEBEETS_CONFIG")
 	if def == "" {
