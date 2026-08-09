@@ -165,11 +165,21 @@ func (c *Client) ResolveDownload(ctx context.Context, t *GWTrack, formatPriority
 // FetchCover downloads the album cover JPEG for a track's ALB_PICTURE hash at
 // the given square size. Returns (nil, "", nil) when no picture is available.
 func (c *Client) FetchCover(ctx context.Context, albPicture string, size int) ([]byte, string, error) {
-	if albPicture == "" {
+	return c.fetchImage(ctx, "cover", albPicture, size)
+}
+
+// FetchArtistImage downloads the artist image JPEG for an ART_PICTURE hash at
+// the given square size. Returns (nil, "", nil) when no picture is available.
+func (c *Client) FetchArtistImage(ctx context.Context, artPicture string, size int) ([]byte, string, error) {
+	return c.fetchImage(ctx, "artist", artPicture, size)
+}
+
+func (c *Client) fetchImage(ctx context.Context, kind, picHash string, size int) ([]byte, string, error) {
+	if picHash == "" {
 		return nil, "", nil
 	}
-	url := fmt.Sprintf("https://e-cdns-images.dzcdn.net/images/cover/%s/%dx%d-000000-80-0-0.jpg",
-		albPicture, size, size)
+	url := fmt.Sprintf("https://e-cdns-images.dzcdn.net/images/%s/%s/%dx%d-000000-80-0-0.jpg",
+		kind, picHash, size, size)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, "", err

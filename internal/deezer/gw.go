@@ -36,6 +36,33 @@ func (c *Client) GetTrack(ctx context.Context, sngID int64) (*GWTrack, error) {
 	return &t, nil
 }
 
+// GetAlbum fetches album metadata via album.getData.
+func (c *Client) GetAlbum(ctx context.Context, albID int64) (*GWAlbum, error) {
+	results, err := c.apiCall(ctx, "album.getData", map[string]any{"ALB_ID": albID})
+	if err != nil {
+		return nil, err
+	}
+	var a GWAlbum
+	if err := json.Unmarshal(results, &a); err != nil {
+		return nil, fmt.Errorf("album.getData: %w", err)
+	}
+	return &a, nil
+}
+
+// GetLyrics fetches synced and plain lyrics via song.getLyrics.
+// Returns nil if the track has no lyrics (LYRICS_ID == 0).
+func (c *Client) GetLyrics(ctx context.Context, sngID int64) (*GWLyrics, error) {
+	results, err := c.apiCall(ctx, "song.getLyrics", map[string]any{"SNG_ID": sngID})
+	if err != nil {
+		return nil, err
+	}
+	var l GWLyrics
+	if err := json.Unmarshal(results, &l); err != nil {
+		return nil, fmt.Errorf("getLyrics: %w", err)
+	}
+	return &l, nil
+}
+
 // favoriteTrackIDs returns the user's loved-track SNG_IDs (paged internally).
 func (c *Client) favoriteTrackIDs(ctx context.Context) ([]int64, error) {
 	const page = 2000
