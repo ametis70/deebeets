@@ -48,11 +48,12 @@ func (r *Runner) runBeets(ctx context.Context, albumDir string) error {
 	argv = append(argv, albumDir)
 
 	cmd := exec.CommandContext(ctx, r.cfg.Binary, argv...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("beets import failed: %w: %s", err, strings.TrimSpace(string(out)))
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("beets import failed: %w", err)
 	}
-	r.log.Debug("beets import ok", "album_dir", albumDir, "output", strings.TrimSpace(string(out)))
+	r.log.Debug("beets import ok", "album_dir", albumDir)
 	return nil
 }
 
