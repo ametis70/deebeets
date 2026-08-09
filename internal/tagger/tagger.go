@@ -11,27 +11,31 @@ import (
 // Metadata holds everything the tagger may write. Zero-valued fields are simply
 // skipped, so callers fill in whatever Deezer provided.
 type Metadata struct {
-	Title       string
-	Artist      string
-	AlbumArtist string
-	Album       string
-	TrackNumber int
-	TotalTracks int
-	DiscNumber  int
-	TotalDiscs  int
-	Year        int
-	Date        string
-	Genre       string
-	Composer    string
-	ISRC        string
-	Barcode     string
-	Copyright   string
-	BPM         int
-	ReplayGain  string
-	Comment     string
-	Lyrics      string
-	Cover       []byte // front cover image bytes (JPEG)
-	CoverMIME   string // e.g. "image/jpeg"
+	Title        string
+	Artist       string   // display name: "Main feat. Feat1 / Feat2"
+	Artists      []string // multi-value: one entry per artist (ARTISTS tag)
+	AlbumArtist  string   // display name: "Main1 / Main2"
+	AlbumArtists []string // multi-value: one entry per album artist (ALBUMARTISTS tag)
+	Album        string
+	TrackNumber  int
+	TotalTracks  int
+	DiscNumber   int
+	TotalDiscs   int
+	Year         int
+	Date         string
+	Genre        string
+	Label        string
+	Composer     string
+	ISRC         string
+	Barcode      string
+	Copyright    string
+	BPM          int
+	ReplayGain   string
+	Comment      string
+	Lyrics       string // plain unsynchronised lyrics
+	SyncedLyrics string // LRC format synchronised lyrics (written as .lrc file, not embedded)
+	Cover        []byte // front cover image bytes (JPEG)
+	CoverMIME    string // e.g. "image/jpeg"
 }
 
 // FieldSet is the set of enabled tag names from config.

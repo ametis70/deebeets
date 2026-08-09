@@ -33,16 +33,39 @@ func writeMP3(path string, md Metadata, f FieldSet) error {
 	if f.on("title") && md.Title != "" {
 		tag.SetTitle(md.Title)
 	}
+
+	// TPE1: artist display name + TXXX:ARTISTS multi-value.
 	if f.on("artist") && md.Artist != "" {
 		tag.SetArtist(md.Artist)
+		for _, a := range md.Artists {
+			if a != "" {
+				tag.AddUserDefinedTextFrame(id3v2.UserDefinedTextFrame{
+					Encoding: tag.DefaultEncoding(), Description: "ARTISTS", Value: a,
+				})
+			}
+		}
 	}
+
+	// TPE2: album artist display name + TXXX:ALBUMARTISTS multi-value.
+	set("albumartist", "TPE2", md.AlbumArtist)
+	if f.on("albumartist") {
+		for _, a := range md.AlbumArtists {
+			if a != "" {
+				tag.AddUserDefinedTextFrame(id3v2.UserDefinedTextFrame{
+					Encoding: tag.DefaultEncoding(), Description: "ALBUMARTISTS", Value: a,
+				})
+			}
+		}
+	}
+
 	if f.on("album") && md.Album != "" {
 		tag.SetAlbum(md.Album)
 	}
-	set("albumartist", "TPE2", md.AlbumArtist)
-	set("composer", "TCOM", md.Composer)
 	set("genre", "TCON", md.Genre)
+	set("label", "TPUB", md.Label)
+	set("composer", "TCOM", md.Composer)
 	set("copyright", "TCOP", md.Copyright)
+
 	if md.Date != "" {
 		set("date", "TDRC", md.Date)
 	} else if md.Year > 0 {
@@ -54,7 +77,7 @@ func writeMP3(path string, md Metadata, f FieldSet) error {
 	if f.on("discnumber") && md.DiscNumber > 0 {
 		tag.AddTextFrame("TPOS", tag.DefaultEncoding(), numPair(md.DiscNumber, disctotalOrZero(f, md)))
 	}
-	if md.BPM > 0 {
+	if f.on("bpm") && md.BPM > 0 {
 		set("bpm", "TBPM", fmt.Sprintf("%d", md.BPM))
 	}
 
@@ -70,6 +93,14 @@ func writeMP3(path string, md Metadata, f FieldSet) error {
 	if f.on("lyrics") && md.Lyrics != "" {
 		tag.AddUnsynchronisedLyricsFrame(id3v2.UnsynchronisedLyricsFrame{
 			Encoding: tag.DefaultEncoding(), Language: "eng", Lyrics: md.Lyrics,
+		})
+	}
+	if f.on("lyrics") && md.SyncedLyrics != "" {
+		tag.AddUnsynchronisedLyricsFrame(id3v2.UnsynchronisedLyricsFrame{
+			Encoding:    tag.DefaultEncoding(),
+			Language:    "eng",
+			ContentDescriptor: "Synced",
+			Lyrics:      md.SyncedLyrics,
 		})
 	}
 	if f.on("cover") && len(md.Cover) > 0 {

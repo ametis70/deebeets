@@ -24,10 +24,30 @@ func writeFLAC(path string, md Metadata, f FieldSet) error {
 	}
 
 	add("title", "TITLE", md.Title)
+
+	// ARTIST: singular display name + multi-value ARTISTS.
 	add("artist", "ARTIST", md.Artist)
+	if f.on("artist") && len(md.Artists) > 0 {
+		for _, a := range md.Artists {
+			if a != "" {
+				_ = cmt.Add("ARTISTS", a)
+			}
+		}
+	}
+
+	// ALBUMARTIST: singular display name + multi-value ALBUMARTISTS.
 	add("albumartist", "ALBUMARTIST", md.AlbumArtist)
+	if f.on("albumartist") && len(md.AlbumArtists) > 0 {
+		for _, a := range md.AlbumArtists {
+			if a != "" {
+				_ = cmt.Add("ALBUMARTISTS", a)
+			}
+		}
+	}
+
 	add("album", "ALBUM", md.Album)
 	add("genre", "GENRE", md.Genre)
+	add("label", "LABEL", md.Label)
 	add("composer", "COMPOSER", md.Composer)
 	add("isrc", "ISRC", md.ISRC)
 	add("barcode", "BARCODE", md.Barcode)
@@ -35,25 +55,31 @@ func writeFLAC(path string, md Metadata, f FieldSet) error {
 	add("replaygain", "REPLAYGAIN_TRACK_GAIN", md.ReplayGain)
 	add("comment", "COMMENT", md.Comment)
 	add("lyrics", "LYRICS", md.Lyrics)
+	// Embed synced lyrics as SYNCEDLYRICS (LRC format). Navidrome reads this
+	// when parsing embedded lyrics and recognises the timestamps.
+	if f.on("lyrics") && md.SyncedLyrics != "" {
+		_ = cmt.Add("SYNCEDLYRICS", md.SyncedLyrics)
+	}
+
 	if md.Date != "" {
 		add("date", "DATE", md.Date)
 	} else if md.Year > 0 {
 		add("date", "DATE", fmt.Sprintf("%d", md.Year))
 	}
 	if f.on("tracknumber") && md.TrackNumber > 0 {
-		add("tracknumber", "TRACKNUMBER", fmt.Sprintf("%d", md.TrackNumber))
+		_ = cmt.Add("TRACKNUMBER", fmt.Sprintf("%d", md.TrackNumber))
 	}
 	if f.on("totaltracks") && md.TotalTracks > 0 {
-		add("totaltracks", "TRACKTOTAL", fmt.Sprintf("%d", md.TotalTracks))
+		_ = cmt.Add("TRACKTOTAL", fmt.Sprintf("%d", md.TotalTracks))
 	}
 	if f.on("discnumber") && md.DiscNumber > 0 {
-		add("discnumber", "DISCNUMBER", fmt.Sprintf("%d", md.DiscNumber))
+		_ = cmt.Add("DISCNUMBER", fmt.Sprintf("%d", md.DiscNumber))
 	}
 	if f.on("disctotal") && md.TotalDiscs > 0 {
-		add("disctotal", "DISCTOTAL", fmt.Sprintf("%d", md.TotalDiscs))
+		_ = cmt.Add("DISCTOTAL", fmt.Sprintf("%d", md.TotalDiscs))
 	}
 	if f.on("bpm") && md.BPM > 0 {
-		add("bpm", "BPM", fmt.Sprintf("%d", md.BPM))
+		_ = cmt.Add("BPM", fmt.Sprintf("%d", md.BPM))
 	}
 
 	replaceComments(file, cmt)
