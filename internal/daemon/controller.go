@@ -19,10 +19,20 @@ func (d *Daemon) Status(ctx context.Context) (control.StatusResponse, error) {
 	if stage == "" {
 		stage = store.StageIdle
 	}
+
+	var convertingCount int
+	if d.pipe != nil {
+		convertingCount = d.pipe.ConvertingCount()
+	}
+
 	return control.StatusResponse{
-		Stage:    stage,
-		Counts:   counts,
-		LastSync: lastSync,
+		Stage:           stage,
+		Syncing:         stage == store.StageSyncing,
+		Downloading:     stage == store.StageDownloading,
+		Converting:      convertingCount > 0 || stage == store.StageImporting,
+		ConvertingCount: convertingCount,
+		Counts:          counts,
+		LastSync:        lastSync,
 	}, nil
 }
 

@@ -39,7 +39,8 @@ type Pipeline struct {
 
 	gate *rateGate
 
-	convertRunning atomic.Bool
+	convertRunning  atomic.Bool
+	convertingCount atomic.Int32 // background batch conversions in flight
 }
 
 // New builds a Pipeline.
@@ -177,7 +178,9 @@ func (p *Pipeline) RunDownloads(ctx context.Context) error {
 		// (convert.concurrency) bounds how many ffmpeg processes run at once.
 		if p.conv != nil && len(convertJobs) > 0 {
 			jobs := convertJobs
+			p.convertingCount.Add(int32(len(jobs)))
 			go func() {
+				defer p.convertingCount.Add(-int32(len(jobs)))
 				converted, failed := p.conv.RunAll(ctx, jobs)
 				for _, id := range converted {
 					_ = p.store.MarkFinished(ctx, id)
@@ -352,6 +355,16 @@ func (p *Pipeline) persistRateLimitUntil(ctx context.Context, t time.Time) {
 	}
 	b, _ := t.MarshalText()
 	_ = p.store.SetMeta(ctx, MetaRateLimitUntil, string(b))
+}
+
+// ConvertingCount returns the number of files currently being converted.
+func (p *Pipeline) ConvertingCount() int {
+	return int(p.convertingCount.Load()) + func() int {
+		if p.convertRunning.Load() {
+			return 1
+		}
+		return 0
+	}()
 }
 
 // CleanIncomplete deletes any orphaned partial files in the incomplete dir.

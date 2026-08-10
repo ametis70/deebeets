@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"deebeets/internal/control"
 	"deebeets/internal/store"
 )
 
@@ -31,7 +32,7 @@ func statusCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				printStatus(st.Stage, st.LastSync, st.Counts)
+				printStatus(st)
 				return nil
 			}
 
@@ -54,50 +55,68 @@ func statusCmd() *cobra.Command {
 				stage = store.StageIdle
 			}
 			fmt.Println("daemon: not running (showing database snapshot)")
-			printStatus(stage, last, counts)
+			printStatus(control.StatusResponse{
+				Stage:    stage,
+				Counts:   counts,
+				LastSync: last,
+			})
 			return nil
 		},
 	}
 }
 
-func printStatus(stage, lastSync string, counts map[string]int) {
-	fmt.Printf("stage:     %s\n", orDash(stage))
-	if lastSync != "" {
-		fmt.Printf("last sync: %s\n", lastSync)
+func printStatus(st control.StatusResponse) {
+	// Activity indicators.
+	syncLabel := "idle"
+	if st.Syncing {
+		syncLabel = "running"
+	}
+	dlLabel := "idle"
+	if st.Downloading {
+		dlLabel = "running"
+	}
+	convLabel := "idle"
+	if st.Converting {
+		if st.ConvertingCount > 0 {
+			convLabel = fmt.Sprintf("running (%d files)", st.ConvertingCount)
+		} else {
+			convLabel = "running"
+		}
+	}
+
+	fmt.Printf("sync:      %s\n", syncLabel)
+	fmt.Printf("download:  %s\n", dlLabel)
+	fmt.Printf("convert:   %s\n", convLabel)
+	if st.LastSync != "" {
+		fmt.Printf("last sync: %s\n", st.LastSync)
 	}
 	fmt.Println("queue:")
 	tw := tabwriter.NewWriter(cmdOut, 0, 0, 2, ' ', 0)
-	// Labels for states that benefit from extra context.
 	labels := map[string]string{
 		store.StateDownloaded: "downloaded (pending convert)",
 	}
 	seen := map[string]bool{}
-	for _, st := range stateOrder {
-		if n, ok := counts[st]; ok {
-			label := st
-			if l, ok := labels[st]; ok {
+	for _, s := range stateOrder {
+		if n, ok := st.Counts[s]; ok {
+			label := s
+			if l, ok := labels[s]; ok {
 				label = l
 			}
 			fmt.Fprintf(tw, "  %s\t%d\n", label, n)
-			seen[st] = true
+			seen[s] = true
 		}
 	}
 	var extra []string
-	for st := range counts {
-		if !seen[st] {
-			extra = append(extra, st)
+	for s := range st.Counts {
+		if !seen[s] {
+			extra = append(extra, s)
 		}
 	}
 	sort.Strings(extra)
-	for _, st := range extra {
-		fmt.Fprintf(tw, "  %s\t%d\n", st, counts[st])
+	for _, s := range extra {
+		fmt.Fprintf(tw, "  %s\t%d\n", s, st.Counts[s])
 	}
 	tw.Flush()
 }
 
-func orDash(s string) string {
-	if s == "" {
-		return "-"
-	}
-	return s
-}
+

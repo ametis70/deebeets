@@ -49,9 +49,13 @@ type Selection struct {
 // StatusResponse summarises daemon and queue state.
 type StatusResponse struct {
 	// Stage is the current orchestrator stage: idle|syncing|downloading|importing.
-	Stage   string         `json:"stage"`
-	Counts  map[string]int `json:"counts"`
-	LastSync string        `json:"last_sync,omitempty"`
+	Stage          string         `json:"stage"`
+	Syncing        bool           `json:"syncing"`
+	Downloading    bool           `json:"downloading"`
+	Converting     bool           `json:"converting"`
+	ConvertingCount int           `json:"converting_count"`
+	Counts         map[string]int `json:"counts"`
+	LastSync       string         `json:"last_sync,omitempty"`
 }
 
 // SyncStartRequest selects favorite types to pull.
