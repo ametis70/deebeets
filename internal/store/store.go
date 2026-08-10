@@ -18,20 +18,19 @@ var migrationsFS embed.FS
 
 // Item states.
 const (
-	StateWaiting     = "waiting"
-	StateQueued      = "queued"
-	StateDownloading = "downloading"
-	StateDownloaded  = "downloaded"
-	StateFinished    = "finished"
-	StateFailed      = "failed"
-	StateBlocklisted = "blocklisted"
-	StateSkipped     = "skipped"
-)
-
-// Failure stages.
-const (
-	StageDownload = "download"
-	StageConvert  = "convert"
+	StateWaiting        = "waiting"
+	StateQueued         = "queued"
+	StateDownloading    = "downloading"
+	StateDownloaded     = "downloaded"
+	StateTagging        = "tagging"
+	StateTagged         = "tagged"
+	StateConverting     = "converting"
+	StateConverted      = "converted" // terminal success
+	StateFailedDownload = "failed_download"
+	StateFailedTag      = "failed_tag"
+	StateFailedConvert  = "failed_convert"
+	StateBlocklisted    = "blocklisted"
+	StateSkipped        = "skipped"
 )
 
 // Orchestrator stages persisted to meta.
@@ -39,7 +38,9 @@ const (
 	StageIdle        = "idle"
 	StageSyncing     = "syncing"
 	StageDownloading = "downloading"
-	StageImporting   = "importing"
+	StageTagging     = "tagging"
+	StageConverting  = "converting"
+	StageImporting   = "importing" // legacy alias for converting
 )
 
 // Store wraps the SQLite database.

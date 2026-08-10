@@ -14,8 +14,10 @@ import (
 // stateOrder is the display order for state counts.
 var stateOrder = []string{
 	store.StateWaiting, store.StateQueued, store.StateDownloading,
-	store.StateDownloaded, store.StateFinished,
-	store.StateFailed, store.StateBlocklisted, store.StateSkipped,
+	store.StateDownloaded, store.StateTagging, store.StateTagged,
+	store.StateConverting, store.StateConverted,
+	store.StateFailedDownload, store.StateFailedTag, store.StateFailedConvert,
+	store.StateBlocklisted, store.StateSkipped,
 }
 
 func statusCmd() *cobra.Command {
@@ -55,12 +57,10 @@ func statusCmd() *cobra.Command {
 				stage = store.StageIdle
 			}
 			fmt.Println("daemon: not running (showing database snapshot)")
-			failedByStage, _ := s.CountFailedByStage(ctx())
 			printStatus(control.StatusResponse{
-				Stage:         stage,
-				Counts:        counts,
-				FailedByStage: failedByStage,
-				LastSync:      last,
+				Stage:    stage,
+				Counts:   counts,
+				LastSync: last,
 			})
 			return nil
 		},
@@ -77,6 +77,10 @@ func printStatus(st control.StatusResponse) {
 	if st.Downloading {
 		dlLabel = "running"
 	}
+	tagLabel := "idle"
+	if st.Tagging {
+		tagLabel = "running"
+	}
 	convLabel := "idle"
 	if st.Converting {
 		if st.ConvertingCount > 0 {
@@ -88,35 +92,30 @@ func printStatus(st control.StatusResponse) {
 
 	fmt.Printf("sync:      %s\n", syncLabel)
 	fmt.Printf("download:  %s\n", dlLabel)
+	fmt.Printf("tag:       %s\n", tagLabel)
 	fmt.Printf("convert:   %s\n", convLabel)
 	if st.LastSync != "" {
 		fmt.Printf("last sync: %s\n", st.LastSync)
 	}
 	fmt.Println("queue:")
 	tw := tabwriter.NewWriter(cmdOut, 0, 0, 2, ' ', 0)
-	labels := map[string]string{
-		store.StateDownloaded: "downloaded (pending convert)",
-	}
-	seen := map[string]bool{}
-	for _, s := range stateOrder {
-		if n, ok := st.Counts[s]; ok {
-			label := s
-			if l, ok := labels[s]; ok {
-				label = l
-			}
-			fmt.Fprintf(tw, "  %s\t%d\n", label, n)
-			seen[s] = true
-			// Break down failed by stage inline.
-			if s == store.StateFailed && len(st.FailedByStage) > 0 {
-				if n := st.FailedByStage[store.StageDownload]; n > 0 {
-					fmt.Fprintf(tw, "    failed to download\t%d\n", n)
+		labels := map[string]string{
+			store.StateDownloaded:     "downloaded (pending tag)",
+			store.StateFailedDownload: "failed (download)",
+			store.StateFailedTag:      "failed (tag)",
+			store.StateFailedConvert:  "failed (convert)",
+		}
+		seen := map[string]bool{}
+		for _, s := range stateOrder {
+			if n, ok := st.Counts[s]; ok {
+				label := s
+				if l, ok := labels[s]; ok {
+					label = l
 				}
-				if n := st.FailedByStage[store.StageConvert]; n > 0 {
-					fmt.Fprintf(tw, "    failed to convert\t%d\n", n)
-				}
+				fmt.Fprintf(tw, "  %s\t%d\n", label, n)
+				seen[s] = true
 			}
 		}
-	}
 	var extra []string
 	for s := range st.Counts {
 		if !seen[s] {

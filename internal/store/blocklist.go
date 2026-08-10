@@ -37,7 +37,7 @@ func (s *Store) AddBlock(ctx context.Context, kind string, extID int64, reason s
 	if kind == KindTrack {
 		if _, err := s.db.ExecContext(ctx,
 			`UPDATE items SET state = ?, updated_at = ? WHERE sng_id = ? AND state != ?`,
-			StateBlocklisted, now, extID, StateFinished); err != nil {
+			StateBlocklisted, now, extID, StateConverted); err != nil {
 			return err
 		}
 	}

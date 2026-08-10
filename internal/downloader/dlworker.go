@@ -123,7 +123,7 @@ func (p *Pipeline) attemptDownload(ctx context.Context, item *store.Item) (*conv
 
 	// If conversion is disabled, go straight to finished.
 	if p.conv == nil {
-		if err := p.store.MarkFinished(ctx, item.SngID); err != nil {
+		if err := p.store.MarkConverted(ctx, item.SngID); err != nil {
 			return nil, err
 		}
 		return nil, nil

@@ -41,7 +41,7 @@ func TestMissingFilesAndForceModes(t *testing.T) {
 	st.ClaimDownload(ctx)
 	rel := filepath.Join("Artist", "Album", "01 Song.flac")
 	st.MarkDownloaded(ctx, 1, "FLAC", rel)
-	st.MarkFinished(ctx, 1)
+	st.MarkConverted(ctx, 1)
 	full := filepath.Join(musicDir, rel)
 	os.MkdirAll(filepath.Dir(full), 0o755)
 	os.WriteFile(full, []byte("audio"), 0o644)
@@ -55,7 +55,7 @@ func TestMissingFilesAndForceModes(t *testing.T) {
 	if err != nil || len(miss) != 1 || miss[0].SngID != 1 {
 		t.Fatalf("missing=%v err=%v, want sng 1", miss, err)
 	}
-	if it, _ := st.Get(ctx, 1); it == nil || it.State != store.StateFinished {
+	if it, _ := st.Get(ctx, 1); it == nil || it.State != store.StateConverted {
 		t.Fatal("row must not be deleted or altered by verify")
 	}
 
@@ -68,7 +68,7 @@ func TestMissingFilesAndForceModes(t *testing.T) {
 		t.Fatalf("after force-missing state=%q file=%q", it.State, it.FilePath)
 	}
 
-	st.MarkFinished(ctx, 1)
+	st.MarkConverted(ctx, 1)
 	n, err = p.ForceAll(ctx, nil)
 	if err != nil || n != 1 {
 		t.Fatalf("ForceAll n=%d err=%v", n, err)
@@ -112,7 +112,7 @@ func TestRunDownloadsBatchRetry(t *testing.T) {
 	for _, id := range []int64{1, 2} {
 		st.Upsert(ctx, store.Discovered{SngID: id, Title: "T"})
 		st.ClaimDownload(ctx)
-		st.MarkInFailedBatch(ctx, []int64{id}, store.StageDownload, "timeout")
+		st.MarkInFailedBatch(ctx, []int64{id}, "timeout")
 	}
 
 	failed, err := st.ClaimFailedBatch(ctx)
@@ -130,18 +130,18 @@ func TestRunDownloadsBatchRetry(t *testing.T) {
 			it1.State, it1.BatchAttempts, it1.InFailedBatch)
 	}
 
-	st.MarkInFailedBatch(ctx, ids, store.StageDownload, "still failing")
+	st.MarkInFailedBatch(ctx, ids, "still failing")
 	for _, id := range ids {
 		it, _ := st.Get(ctx, id)
-		st.MarkFailed(ctx, it.SngID, store.StageDownload, it.Error)
+		st.MarkFailed(ctx, it.SngID, "download", it.Error)
 	}
 
 	it1, _ = st.Get(ctx, 1)
 	it2, _ := st.Get(ctx, 2)
-	if it1.State != store.StateFailed || it1.InFailedBatch {
+	if it1.State != store.StateFailedDownload || it1.InFailedBatch {
 		t.Fatalf("item 1 permanently failed: state=%q in_failed=%v", it1.State, it1.InFailedBatch)
 	}
-	if it2.State != store.StateFailed || it2.InFailedBatch {
+	if it2.State != store.StateFailedDownload || it2.InFailedBatch {
 		t.Fatalf("item 2 permanently failed: state=%q in_failed=%v", it2.State, it2.InFailedBatch)
 	}
 

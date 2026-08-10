@@ -26,15 +26,16 @@ func (d *Daemon) Status(ctx context.Context) (control.StatusResponse, error) {
 	}
 
 	failedByStage, _ := d.store.CountFailedByStage(ctx)
+	_ = failedByStage // counts now visible directly in state names
 
 	return control.StatusResponse{
 		Stage:           stage,
 		Syncing:         stage == store.StageSyncing,
 		Downloading:     stage == store.StageDownloading,
-		Converting:      convertingCount > 0 || stage == store.StageImporting,
+		Tagging:         stage == store.StageTagging,
+		Converting:      convertingCount > 0 || stage == store.StageConverting || stage == store.StageImporting,
 		ConvertingCount: convertingCount,
 		Counts:          counts,
-		FailedByStage:   failedByStage,
 		LastSync:        lastSync,
 	}, nil
 }

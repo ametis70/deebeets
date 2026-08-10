@@ -8,26 +8,28 @@ import (
 	"time"
 )
 
-// Item is a queue row: one Deezer track and its download state.
+// Item is a queue row: one Deezer track and its pipeline state.
 type Item struct {
-	SngID          int64
-	Title          string
-	Artist         string
-	Album          string
-	AlbumArtist    string
-	GroupKey       string
-	SourceType     string
-	SourceID       string
-	State          string
-	Stage          string
-	Format         string
-	FilePath       string
-	Attempts       int
-	BatchAttempts  int
-	InFailedBatch  bool
-	Error          string
-	CreatedAt      int64
-	UpdatedAt      int64
+	SngID         int64
+	Title         string
+	Artist        string
+	Album         string
+	AlbumArtist   string
+	GroupKey      string
+	SourceType    string
+	SourceID      string
+	State         string
+	Stage         string // legacy column kept for schema compat; use state for failures
+	Format        string
+	FilePath      string
+	Attempts      int
+	BatchAttempts int
+	InFailedBatch bool
+	Error         string
+	TrackData     string // JSON: song.getData response
+	LyricsData    string // JSON: song.getLyrics response (empty if none)
+	CreatedAt     int64
+	UpdatedAt     int64
 }
 
 // Discovered is the metadata a sync knows about a track before downloading.
@@ -40,11 +42,14 @@ type Discovered struct {
 	GroupKey    string
 	SourceType  string
 	SourceID    string
+	TrackData   string // JSON blob from song.getData
+	LyricsData  string // JSON blob from song.getLyrics
 }
 
 const itemColumns = `sng_id, title, artist, album, album_artist, group_key,
 	source_type, source_id, state, stage, format, file_path,
-	attempts, batch_attempts, in_failed_batch, error, created_at, updated_at`
+	attempts, batch_attempts, in_failed_batch, error, track_data, lyrics_data,
+	created_at, updated_at`
 
 func scanItem(row interface{ Scan(...any) error }) (*Item, error) {
 	var it Item
@@ -53,7 +58,8 @@ func scanItem(row interface{ Scan(...any) error }) (*Item, error) {
 		&it.GroupKey, &it.SourceType, &it.SourceID, &it.State, &it.Stage,
 		&it.Format, &it.FilePath,
 		&it.Attempts, &it.BatchAttempts, &inFailed,
-		&it.Error, &it.CreatedAt, &it.UpdatedAt)
+		&it.Error, &it.TrackData, &it.LyricsData,
+		&it.CreatedAt, &it.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -62,10 +68,8 @@ func scanItem(row interface{ Scan(...any) error }) (*Item, error) {
 }
 
 // Upsert records a discovered track. New tracks are inserted as `waiting`
-// (or `blocklisted` if their track/album/artist is blocked). Existing tracks
-// keep their state and download progress — only metadata is refreshed — so a
-// re-sync is idempotent and never resurrects finished work. Returns true if a
-// new row was inserted.
+// (or `blocklisted` if blocked). On re-sync, metadata and cached API data are
+// refreshed but state/progress are preserved. Returns true if inserted.
 func (s *Store) Upsert(ctx context.Context, d Discovered) (bool, error) {
 	now := time.Now().Unix()
 
@@ -80,10 +84,10 @@ func (s *Store) Upsert(ctx context.Context, d Discovered) (bool, error) {
 
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO items (`+itemColumns+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', '', 0, 0, 0, '', ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', '', 0, 0, 0, '', ?, ?, ?, ?)
 		ON CONFLICT(sng_id) DO NOTHING`,
 		d.SngID, d.Title, d.Artist, d.Album, d.AlbumArtist, d.GroupKey,
-		d.SourceType, d.SourceID, initial, now, now)
+		d.SourceType, d.SourceID, initial, d.TrackData, d.LyricsData, now, now)
 	if err != nil {
 		return false, err
 	}
@@ -91,13 +95,14 @@ func (s *Store) Upsert(ctx context.Context, d Discovered) (bool, error) {
 		return true, nil
 	}
 
-	// Existing row: refresh metadata only, preserving state and progress.
+	// Existing row: refresh metadata and cached API data, preserving state/progress.
 	_, err = s.db.ExecContext(ctx, `
 		UPDATE items SET title = ?, artist = ?, album = ?, album_artist = ?,
-			group_key = ?, source_type = ?, source_id = ?, updated_at = ?
+			group_key = ?, source_type = ?, source_id = ?,
+			track_data = ?, lyrics_data = ?, updated_at = ?
 		WHERE sng_id = ?`,
 		d.Title, d.Artist, d.Album, d.AlbumArtist, d.GroupKey,
-		d.SourceType, d.SourceID, now, d.SngID)
+		d.SourceType, d.SourceID, d.TrackData, d.LyricsData, now, d.SngID)
 	return false, err
 }
 
@@ -163,26 +168,6 @@ func (s *Store) CountByState(ctx context.Context) (map[string]int, error) {
 	return out, rows.Err()
 }
 
-// CountFailedByStage returns the number of failed items per stage (download|convert).
-func (s *Store) CountFailedByStage(ctx context.Context) (map[string]int, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT stage, COUNT(*) FROM items WHERE state = 'failed' GROUP BY stage`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := map[string]int{}
-	for rows.Next() {
-		var stage string
-		var n int
-		if err := rows.Scan(&stage, &n); err != nil {
-			return nil, err
-		}
-		out[stage] = n
-	}
-	return out, rows.Err()
-}
-
 // ClaimDownload atomically claims the oldest pending track for downloading,
 // incrementing its attempt counter. Returns (nil, false, nil) when the queue
 // is empty.
@@ -216,37 +201,69 @@ func (s *Store) MarkDownloaded(ctx context.Context, sngID int64, format, filePat
 	return err
 }
 
-// MarkFinished moves an item to its terminal success state.
-func (s *Store) MarkFinished(ctx context.Context, sngID int64) error {
-	return s.SetState(ctx, sngID, StateFinished)
+// ClaimTag atomically claims the oldest downloaded track for tagging.
+func (s *Store) ClaimTag(ctx context.Context) (*Item, bool, error) {
+	row := s.db.QueryRowContext(ctx, `
+		UPDATE items SET state = ?, updated_at = ?
+		WHERE sng_id = (
+			SELECT sng_id FROM items WHERE state = ?
+			ORDER BY updated_at ASC LIMIT 1
+		)
+		RETURNING `+itemColumns,
+		StateTagging, time.Now().Unix(), StateDownloaded)
+	it, err := scanItem(row)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return it, true, nil
 }
 
-// MarkAllDownloadedFinished sets state=finished for all state=downloaded items.
-// Called after a successful import run, or immediately when import is disabled.
-func (s *Store) MarkAllDownloadedFinished(ctx context.Context) error {
+// MarkTagged moves an item to `tagged` (tagging succeeded).
+func (s *Store) MarkTagged(ctx context.Context, sngID int64) error {
+	return s.SetState(ctx, sngID, StateTagged)
+}
+
+// MarkConverted moves an item to `converted` (terminal success).
+func (s *Store) MarkConverted(ctx context.Context, sngID int64) error {
+	return s.SetState(ctx, sngID, StateConverted)
+}
+
+// MarkFailedDownload records a permanent download failure.
+func (s *Store) MarkFailedDownload(ctx context.Context, sngID int64, errMsg string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE items SET state = ?, updated_at = ? WHERE state = ?`,
-		StateFinished, time.Now().Unix(), StateDownloaded)
+		`UPDATE items SET state = ?, error = ?, in_failed_batch = 0, updated_at = ? WHERE sng_id = ?`,
+		StateFailedDownload, errMsg, time.Now().Unix(), sngID)
 	return err
 }
 
-// MarkFailed records a permanent failure at the given stage.
-func (s *Store) MarkFailed(ctx context.Context, sngID int64, stage, errMsg string) error {
+// MarkFailedTag records a tagging failure.
+func (s *Store) MarkFailedTag(ctx context.Context, sngID int64, errMsg string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE items SET state = ?, stage = ?, error = ?, in_failed_batch = 0, updated_at = ? WHERE sng_id = ?`,
-		StateFailed, stage, errMsg, time.Now().Unix(), sngID)
+		`UPDATE items SET state = ?, error = ?, updated_at = ? WHERE sng_id = ?`,
+		StateFailedTag, errMsg, time.Now().Unix(), sngID)
 	return err
 }
 
-// MarkInFailedBatch marks items as failed and adds them to the current run's
-// failed set (in_failed_batch=1) so the batch can be retried.
-func (s *Store) MarkInFailedBatch(ctx context.Context, ids []int64, stage, errMsg string) error {
+// MarkFailedConvert records a conversion failure.
+func (s *Store) MarkFailedConvert(ctx context.Context, sngID int64, errMsg string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE items SET state = ?, error = ?, updated_at = ? WHERE sng_id = ?`,
+		StateFailedConvert, errMsg, time.Now().Unix(), sngID)
+	return err
+}
+
+// MarkInFailedBatch marks items as failed_download and adds them to the current
+// run's failed set (in_failed_batch=1) so the batch can be retried.
+func (s *Store) MarkInFailedBatch(ctx context.Context, ids []int64, errMsg string) error {
 	now := time.Now().Unix()
 	for _, id := range ids {
 		_, err := s.db.ExecContext(ctx,
-			`UPDATE items SET state = ?, stage = ?, error = ?, in_failed_batch = 1, updated_at = ?
+			`UPDATE items SET state = ?, error = ?, in_failed_batch = 1, updated_at = ?
 			 WHERE sng_id = ?`,
-			StateFailed, stage, errMsg, now, id)
+			StateFailedDownload, errMsg, now, id)
 		if err != nil {
 			return err
 		}
@@ -254,8 +271,19 @@ func (s *Store) MarkInFailedBatch(ctx context.Context, ids []int64, stage, errMs
 	return nil
 }
 
-// ClaimFailedBatch returns all items currently in the failed batch set
-// (in_failed_batch=1).
+// MarkFailed is a compatibility shim; prefer the typed MarkFailed* methods.
+func (s *Store) MarkFailed(ctx context.Context, sngID int64, stage, errMsg string) error {
+	switch stage {
+	case "convert":
+		return s.MarkFailedConvert(ctx, sngID, errMsg)
+	case "tag":
+		return s.MarkFailedTag(ctx, sngID, errMsg)
+	default:
+		return s.MarkFailedDownload(ctx, sngID, errMsg)
+	}
+}
+
+// ClaimFailedBatch returns all items currently in the failed batch set.
 func (s *Store) ClaimFailedBatch(ctx context.Context) ([]*Item, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT `+itemColumns+` FROM items WHERE in_failed_batch = 1 ORDER BY updated_at ASC`)
@@ -294,14 +322,53 @@ func (s *Store) RequeueFailedBatch(ctx context.Context, ids []int64) error {
 	return err
 }
 
-// RequeueAllFailed resets all permanently-failed items back to queued,
-// clearing batch_attempts and in_failed_batch. Used by `redownload --failed`.
+// RequeueAllFailed resets all permanently-failed items back to queued.
+// Used by `redownload --failed`.
 func (s *Store) RequeueAllFailed(ctx context.Context) (int, error) {
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE items SET state = ?, stage = '', error = '',
+		`UPDATE items SET state = ?, error = '',
+			batch_attempts = 0, in_failed_batch = 0, updated_at = ?
+		 WHERE state IN (?, ?, ?)`,
+		StateQueued, time.Now().Unix(),
+		StateFailedDownload, StateFailedTag, StateFailedConvert)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+// RequeueAllFailedDownloads resets only download-failed items back to queued.
+func (s *Store) RequeueAllFailedDownloads(ctx context.Context) (int, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE items SET state = ?, error = '',
 			batch_attempts = 0, in_failed_batch = 0, updated_at = ?
 		 WHERE state = ?`,
-		StateQueued, time.Now().Unix(), StateFailed)
+		StateQueued, time.Now().Unix(), StateFailedDownload)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+// RequeueAllFailedTags resets only tag-failed items back to downloaded for retry.
+func (s *Store) RequeueAllFailedTags(ctx context.Context) (int, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE items SET state = ?, error = '', updated_at = ? WHERE state = ?`,
+		StateDownloaded, time.Now().Unix(), StateFailedTag)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
+// RequeueAllFailedConverts resets only convert-failed items back to tagged for retry.
+func (s *Store) RequeueAllFailedConverts(ctx context.Context) (int, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE items SET state = ?, error = '', updated_at = ? WHERE state = ?`,
+		StateTagged, time.Now().Unix(), StateFailedConvert)
 	if err != nil {
 		return 0, err
 	}
@@ -327,28 +394,36 @@ func (s *Store) SetStateMany(ctx context.Context, sngIDs []int64, state string) 
 	return nil
 }
 
-// RecoverInterrupted resets in-flight rows after a daemon restart:
-// downloading tracks go back to queued. Returns the number of rows recovered.
+// RecoverInterrupted resets in-flight rows after a daemon restart.
+// downloading → queued, tagging → downloaded, converting → tagged.
 func (s *Store) RecoverInterrupted(ctx context.Context) (int, error) {
-	res, err := s.db.ExecContext(ctx,
-		`UPDATE items SET state = ?, updated_at = ? WHERE state = ?`,
-		StateQueued, time.Now().Unix(), StateDownloading)
-	if err != nil {
-		return 0, err
+	now := time.Now().Unix()
+	total := 0
+	for _, pair := range [][2]string{
+		{StateDownloading, StateQueued},
+		{StateTagging, StateDownloaded},
+		{StateConverting, StateTagged},
+	} {
+		res, err := s.db.ExecContext(ctx,
+			`UPDATE items SET state = ?, updated_at = ? WHERE state = ?`,
+			pair[1], now, pair[0])
+		if err != nil {
+			return total, err
+		}
+		n, _ := res.RowsAffected()
+		total += int(n)
 	}
-	n, _ := res.RowsAffected()
-	return int(n), nil
+	return total, nil
 }
 
 // Requeue moves the given tracks back to `queued` for (re)downloading. When
-// clearFile is true the recorded file_path is cleared too. Returns the number
-// of rows changed.
+// clearFile is true the recorded file_path is cleared too.
 func (s *Store) Requeue(ctx context.Context, sngIDs []int64, clearFile bool) (int, error) {
 	if len(sngIDs) == 0 {
 		return 0, nil
 	}
 	now := time.Now().Unix()
-	set := `state = ?, stage = '', error = '', batch_attempts = 0, in_failed_batch = 0`
+	set := `state = ?, error = '', batch_attempts = 0, in_failed_batch = 0`
 	if clearFile {
 		set += `, file_path = ''`
 	}
@@ -368,11 +443,26 @@ func (s *Store) Requeue(ctx context.Context, sngIDs []int64, clearFile bool) (in
 	return int(n), nil
 }
 
+// RequeueForRetag moves tagged/converted items back to downloaded so the tag
+// stage will re-process them. Used by `retag --all`.
+func (s *Store) RequeueForRetag(ctx context.Context) (int, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE items SET state = ?, error = '', updated_at = ?
+		 WHERE state IN (?, ?, ?)`,
+		StateDownloaded, time.Now().Unix(),
+		StateTagged, StateConverted, StateFailedTag)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
 // GroupProgress returns (terminal, total) counts for items sharing a group_key.
 func (s *Store) GroupProgress(ctx context.Context, groupKey string) (terminal, total int, err error) {
 	err = s.db.QueryRowContext(ctx, `
 		SELECT
-			COUNT(CASE WHEN state IN ('finished','failed','skipped','blocklisted') THEN 1 END),
+			COUNT(CASE WHEN state IN ('tagged','converted','failed_download','failed_tag','failed_convert','skipped','blocklisted') THEN 1 END),
 			COUNT(*)
 		FROM items WHERE group_key = ?`, groupKey).Scan(&terminal, &total)
 	return
@@ -382,14 +472,37 @@ func (s *Store) GroupProgress(ctx context.Context, groupKey string) (terminal, t
 func (s *Store) SourceProgress(ctx context.Context, sourceType, sourceID string) (terminal, total int, err error) {
 	err = s.db.QueryRowContext(ctx, `
 		SELECT
-			COUNT(CASE WHEN state IN ('finished','failed','skipped','blocklisted') THEN 1 END),
+			COUNT(CASE WHEN state IN ('tagged','converted','failed_download','failed_tag','failed_convert','skipped','blocklisted') THEN 1 END),
 			COUNT(*)
 		FROM items WHERE source_type = ? AND source_id = ?`, sourceType, sourceID).Scan(&terminal, &total)
 	return
 }
 
-// FinishedItems returns all items whose state is finished or downloaded.
-// Used by `verify` and force-missing.
+// FinishedItems returns all items that have a file on disk (tagged or converted).
+// Used by verify and force-missing.
 func (s *Store) FinishedItems(ctx context.Context) ([]*Item, error) {
-	return s.List(ctx, []string{StateFinished, StateDownloaded}, 0)
+	return s.List(ctx, []string{StateTagged, StateConverted, StateDownloaded}, 0)
+}
+
+// CountFailedByStage returns counts of failed items grouped by failure state.
+func (s *Store) CountFailedByStage(ctx context.Context) (map[string]int, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT state, COUNT(*) FROM items
+		 WHERE state IN (?, ?, ?)
+		 GROUP BY state`,
+		StateFailedDownload, StateFailedTag, StateFailedConvert)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var state string
+		var n int
+		if err := rows.Scan(&state, &n); err != nil {
+			return nil, err
+		}
+		out[state] = n
+	}
+	return out, rows.Err()
 }

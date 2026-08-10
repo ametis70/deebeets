@@ -114,7 +114,7 @@ func (p *Pipeline) RunDownloads(ctx context.Context) (DownloadResult, error) {
 				ids := itemIDs(failed)
 				p.log.Warn("batch retry exhausted: marking permanently failed", "count", len(ids))
 				for _, it := range failed {
-					_ = p.store.MarkFailed(ctx, it.SngID, store.StageDownload, it.Error)
+					_ = p.store.MarkFailedDownload(ctx, it.SngID, it.Error)
 				}
 				res.Failed += len(ids)
 				return res, nil
@@ -179,7 +179,7 @@ func (p *Pipeline) RunDownloads(ctx context.Context) (DownloadResult, error) {
 		}
 
 		for i, id := range failedIDs {
-			_ = p.store.MarkInFailedBatch(ctx, []int64{id}, store.StageDownload, failedErrs[i])
+			_ = p.store.MarkInFailedBatch(ctx, []int64{id}, failedErrs[i])
 		}
 		res.Failed += len(failedIDs)
 
@@ -192,11 +192,11 @@ func (p *Pipeline) RunDownloads(ctx context.Context) (DownloadResult, error) {
 				defer p.convertingCount.Add(-int32(len(jobs)))
 				converted, failed := p.conv.RunAll(ctx, jobs)
 				for _, id := range converted {
-					_ = p.store.MarkFinished(ctx, id)
+					_ = p.store.MarkConverted(ctx, id)
 				}
 				for id, errMsg := range failed {
 					p.log.Warn("conversion failed", "sng_id", id, "err", errMsg)
-					_ = p.store.MarkFailed(ctx, id, store.StageConvert, errMsg)
+					_ = p.store.MarkFailedConvert(ctx, id, errMsg)
 				}
 			}()
 		}
@@ -253,7 +253,7 @@ func (p *Pipeline) RunConvert(ctx context.Context) (ConvertResult, error) {
 		}
 		if _, err := os.Stat(outPath); err == nil {
 			if it.State == store.StateDownloaded {
-				_ = p.store.MarkFinished(ctx, it.SngID)
+				_ = p.store.MarkConverted(ctx, it.SngID)
 			}
 			continue
 		}
@@ -267,11 +267,11 @@ func (p *Pipeline) RunConvert(ctx context.Context) (ConvertResult, error) {
 	p.log.Info("starting convert run", "count", len(jobs))
 	converted, failed := p.conv.RunAll(ctx, jobs)
 	for _, id := range converted {
-		_ = p.store.MarkFinished(ctx, id)
+		_ = p.store.MarkConverted(ctx, id)
 	}
 	for id, errMsg := range failed {
 		p.log.Warn("conversion failed", "sng_id", id, "err", errMsg)
-		_ = p.store.MarkFailed(ctx, id, store.StageConvert, errMsg)
+		_ = p.store.MarkFailedConvert(ctx, id, errMsg)
 	}
 	res.Converted = len(converted)
 	res.Failed = len(failed)
