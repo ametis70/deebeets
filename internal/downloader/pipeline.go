@@ -172,18 +172,20 @@ func (p *Pipeline) RunDownloads(ctx context.Context) error {
 			_ = p.store.MarkInFailedBatch(ctx, []int64{id}, store.StageDownload, failedErrs[i])
 		}
 
-		// Convert successful downloads immediately if converter is enabled,
-		// then mark items finished. If converter is disabled, items were
-		// already marked finished inside downloadOne.
+		// Convert successful downloads in the background so the next download
+		// batch starts immediately. The converter's own concurrency limit
+		// (convert.concurrency) bounds how many ffmpeg processes run at once.
 		if p.conv != nil && len(convertJobs) > 0 {
-			converted, failed := p.conv.RunAll(ctx, convertJobs)
-			for _, id := range converted {
-				_ = p.store.MarkFinished(ctx, id)
-			}
-			for id, errMsg := range failed {
-				p.log.Warn("conversion failed", "sng_id", id, "err", errMsg)
-				// Leave as state=downloaded so it can be retried manually.
-			}
+			jobs := convertJobs
+			go func() {
+				converted, failed := p.conv.RunAll(ctx, jobs)
+				for _, id := range converted {
+					_ = p.store.MarkFinished(ctx, id)
+				}
+				for id, errMsg := range failed {
+					p.log.Warn("conversion failed", "sng_id", id, "err", errMsg)
+				}
+			}()
 		}
 
 		if d := p.cfg.Download.InterBatchDelay; d > 0 {
