@@ -107,7 +107,51 @@ func writeOggOpus(path string, md Metadata, f FieldSet) error {
 	return nil
 }
 
-// writeFLAC writes Vorbis comments (and an embedded picture) to a FLAC file.
+// CopyTagsFromFLAC reads all Vorbis comments from a FLAC file and writes them
+// to an Ogg Opus file using opustags. This preserves multi-value tags correctly
+// since we read them as separate entries and write each with a separate -s flag.
+func CopyTagsFromFLAC(flacPath, opusPath string) error {
+	f, err := flac.ParseFile(flacPath)
+	if err != nil {
+		return fmt.Errorf("parse flac: %w", err)
+	}
+
+	var tags []vorbisTag
+	for _, m := range f.Meta {
+		if m.Type != flac.VorbisComment {
+			continue
+		}
+		cmt, err := flacvorbis.ParseFromMetaDataBlock(*m)
+		if err != nil {
+			continue
+		}
+		for _, c := range cmt.Comments {
+			parts := strings.SplitN(c, "=", 2)
+			if len(parts) == 2 {
+				tags = append(tags, vorbisTag{parts[0], parts[1]})
+			}
+		}
+	}
+	if len(tags) == 0 {
+		return nil
+	}
+
+	argv := []string{"opustags", "--raw", "-i", "-D"}
+	for _, t := range tags {
+		argv = append(argv, "-s", t.Key+"="+t.Val)
+	}
+	argv = append(argv, opusPath)
+
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Env = append(os.Environ(), "LANG=C.UTF-8", "LC_ALL=C.UTF-8")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("opustags copy: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+
 func writeFLAC(path string, md Metadata, f FieldSet) error {
 	file, err := flac.ParseFile(path)
 	if err != nil {

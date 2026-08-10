@@ -238,7 +238,7 @@ func (p *Pipeline) RunConvert(ctx context.Context) error {
 			}
 			continue
 		}
-		jobs = append(jobs, converter.ConvertJob{SngID: it.SngID, SourcePath: srcPath})
+		jobs = append(jobs, converter.ConvertJob{SngID: it.SngID, SourcePath: srcPath, CopyTagsFromSource: true})
 	}
 
 	if len(jobs) == 0 {

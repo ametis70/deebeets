@@ -21,6 +21,10 @@ type ConvertJob struct {
 	SngID      int64
 	SourcePath string
 	Metadata   tagger.Metadata
+	// CopyTagsFromSource instructs the converter to read tags from the source
+	// FLAC file rather than using Metadata. Used by RunConvert which doesn't
+	// have metadata in memory.
+	CopyTagsFromSource bool
 }
 
 // Runner converts audio files using ffmpeg and writes proper multi-value tags.
@@ -104,7 +108,12 @@ func (r *Runner) convertOne(ctx context.Context, job ConvertJob) error {
 	}
 
 	// Write full multi-value tags to the converted file.
-	if err := tagger.Write(outPath, r.outputFormat(), job.Metadata, tagger.DefaultFieldSet()); err != nil {
+	if job.CopyTagsFromSource {
+		// Read tags from source FLAC and copy them to the opus file.
+		if err := tagger.CopyTagsFromFLAC(job.SourcePath, outPath); err != nil {
+			r.log.Warn("convert: tag copy failed", "path", outPath, "err", err)
+		}
+	} else if err := tagger.Write(outPath, r.outputFormat(), job.Metadata, tagger.DefaultFieldSet()); err != nil {
 		r.log.Warn("convert: tagging failed", "path", outPath, "err", err)
 	}
 
