@@ -236,8 +236,15 @@ func (p *Pipeline) buildMetadata(ctx context.Context, t *deezer.GWTrack, album *
 	}
 
 	if lyrics != nil {
-		md.Lyrics = lyrics.LyricsText
-		md.SyncedLyrics = lyrics.ToLRC()
+		lrc := lyrics.ToLRC()
+		if lrc != "" {
+			// Prefer LRC in the LYRICS tag — Navidrome parses timestamps from it
+			// to produce synced lyrics. Plain text fallback if no sync data.
+			md.Lyrics = lrc
+		} else {
+			md.Lyrics = lyrics.LyricsText
+		}
+		md.SyncedLyrics = lrc
 	}
 
 	if p.fields["cover"] && t.AlbPicture != "" {

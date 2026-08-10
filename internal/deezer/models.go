@@ -131,7 +131,7 @@ func (l *GWLyrics) ToLRC() string {
 			continue
 		}
 		sb.WriteString(e.LRCTimestamp)
-		sb.WriteString(e.Line)
+		sb.WriteString(strings.TrimSpace(e.Line))
 		sb.WriteString("\n")
 	}
 	return sb.String()
