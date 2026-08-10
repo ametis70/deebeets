@@ -2,135 +2,76 @@ package downloader
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 
-	"deeznt/internal/converter"
 	"deeznt/internal/deezer"
 	"deeznt/internal/store"
 	"deeznt/internal/tagger"
 )
 
-// downloadOne attempts a single download. Returns a ConvertJob (non-nil on
-// success with converter enabled) and any error.
-func (p *Pipeline) downloadOne(ctx context.Context, item *store.Item) (*converter.ConvertJob, error) {
-	job, err := p.attemptDownload(ctx, item)
+// downloadOne streams one track to disk. Returns an error on failure.
+// Metadata tagging is handled by the separate tag stage.
+func (p *Pipeline) downloadOne(ctx context.Context, item *store.Item) error {
+	err := p.attemptDownload(ctx, item)
 	if err == nil {
 		p.logCompletion(ctx, item)
 	}
-	return job, err
+	return err
 }
 
-// attemptDownload performs one download attempt end to end. Returns a
-// ConvertJob with the source path and metadata if conversion is enabled.
-func (p *Pipeline) attemptDownload(ctx context.Context, item *store.Item) (*converter.ConvertJob, error) {
+// attemptDownload: re-fetch song.getData for a fresh token, resolve CDN URL,
+// stream the audio file to disk. Tags are NOT written — that is the tag stage.
+func (p *Pipeline) attemptDownload(ctx context.Context, item *store.Item) error {
 	p.log.Info("downloading", "sng_id", item.SngID, "title", item.Title, "artist", item.Artist)
 
-	track, err := p.dz.GetTrack(ctx, item.SngID)
+	// Always call song.getData to get a fresh TRACK_TOKEN (tokens expire ~1h).
+	// Update the cached track_data in the DB as a side effect.
+	track, trackData, err := p.dz.GetTrackWithRaw(ctx, item.SngID)
 	if err != nil {
-		return nil, fmt.Errorf("get track: %w", err)
+		return fmt.Errorf("get track: %w", err)
 	}
+	if trackData != "" {
+		_, _ = p.store.UpdateTrackData(ctx, item.SngID, trackData)
+	}
+
 	resolved, err := p.dz.ResolveDownload(ctx, track, p.cfg.Deezer.FormatPriority)
 	if err != nil {
-		return nil, fmt.Errorf("resolve: %w", err)
+		return fmt.Errorf("resolve: %w", err)
 	}
 
 	ext := tagger.ExtForFormat(resolved.Format)
 	rel, err := tagger.RenderPath(p.cfg.Tags.NamingTemplate, buildNameData(track, ext))
 	if err != nil {
-		return nil, fmt.Errorf("render path: %w", err)
+		return fmt.Errorf("render path: %w", err)
 	}
 	finalPath := filepath.Join(p.musicDir, rel)
 
 	tmp, err := p.streamToTemp(ctx, item.SngID, resolved.URL)
 	if err != nil {
-		return nil, fmt.Errorf("stream: %w", err)
-	}
-
-	// Fetch album metadata (total tracks/discs, label, genre).
-	var album *deezer.GWAlbum
-	if albID := track.AlbumID(); albID > 0 {
-		if a, err := p.dz.GetAlbum(ctx, albID); err == nil {
-			album = a
-		} else {
-			p.log.Warn("failed to fetch album metadata", "alb_id", albID, "err", err)
-		}
-	}
-
-	// Fetch lyrics (plain + synced).
-	var lyrics *deezer.GWLyrics
-	if track.LyricsID != 0 && p.fields["lyrics"] {
-		if l, err := p.dz.GetLyrics(ctx, item.SngID); err == nil {
-			lyrics = l
-		} else {
-			p.log.Warn("failed to fetch lyrics", "sng_id", item.SngID, "err", err)
-		}
-	}
-
-	md := p.buildMetadata(ctx, track, album, lyrics)
-
-	if err := tagger.Write(tmp, resolved.Format, md, p.fields); err != nil {
-		p.log.Warn("tagging failed", "sng_id", item.SngID, "err", err)
+		return fmt.Errorf("stream: %w", err)
 	}
 
 	albumDir := filepath.Dir(finalPath)
 	if err := os.MkdirAll(albumDir, 0o755); err != nil {
 		_ = os.Remove(tmp)
-		return nil, fmt.Errorf("mkdir: %w", err)
+		return fmt.Errorf("mkdir: %w", err)
 	}
 	if err := os.Rename(tmp, finalPath); err != nil {
 		_ = os.Remove(tmp)
-		return nil, fmt.Errorf("move into place: %w", err)
-	}
-
-	// Write cover.jpg alongside the tracks if not already present.
-	if err := tagger.WriteCoverFile(albumDir, md.Cover); err != nil {
-		p.log.Warn("failed to write cover.jpg", "path", albumDir, "err", err)
-	}
-
-	// Write folder.jpg in the artist directory for Navidrome artist image.
-	if p.fields["cover"] {
-		artistDir := filepath.Dir(albumDir)
-		folderPath := filepath.Join(artistDir, "folder.jpg")
-		if _, err := os.Stat(folderPath); os.IsNotExist(err) {
-			if artPic := track.MainArtistPicture(); artPic != "" {
-				if data, _, err := p.dz.FetchArtistImage(ctx, artPic, 500); err == nil && len(data) > 0 {
-					if err := os.WriteFile(folderPath, data, 0o644); err != nil {
-						p.log.Warn("failed to write artist folder.jpg", "path", folderPath, "err", err)
-					}
-				}
-			}
-		}
-	}
-
-	// Write synced lyrics as a .lrc file alongside the audio file.
-	if md.SyncedLyrics != "" {
-		lrcPath := strings.TrimSuffix(finalPath, filepath.Ext(finalPath)) + ".lrc"
-		if err := os.WriteFile(lrcPath, []byte(md.SyncedLyrics), 0o644); err != nil {
-			p.log.Warn("failed to write .lrc file", "path", lrcPath, "err", err)
-		}
+		return fmt.Errorf("move into place: %w", err)
 	}
 
 	p.gate.clear()
 	if err := p.store.MarkDownloaded(ctx, item.SngID, resolved.Format, rel); err != nil {
-		return nil, err
+		return err
 	}
 	p.log.Info("downloaded", "sng_id", item.SngID, "title", item.Title,
 		"format", resolved.Format, "path", rel)
-
-	// If conversion is disabled, go straight to finished.
-	if p.conv == nil {
-		if err := p.store.MarkConverted(ctx, item.SngID); err != nil {
-			return nil, err
-		}
-		return nil, nil
-	}
-
-	// Return a convert job so the pipeline can convert and then mark finished.
-	return &converter.ConvertJob{SngID: item.SngID, SourcePath: finalPath, Metadata: md}, nil
+	return nil
 }
 
 // streamToTemp downloads and decrypts a track into a temp file.
@@ -204,54 +145,73 @@ func (p *Pipeline) logCompletion(ctx context.Context, item *store.Item) {
 	p.log.Info(item.SourceType+" complete", "source_id", item.SourceID, "tracks", stotal)
 }
 
-func (p *Pipeline) buildMetadata(ctx context.Context, t *deezer.GWTrack, album *deezer.GWAlbum, lyrics *deezer.GWLyrics) tagger.Metadata {
+// buildMetadataFromCache constructs tagger.Metadata from cached JSON in the DB item.
+func buildMetadataFromCache(item *store.Item, albumData string) (tagger.Metadata, error) {
+	if item.TrackData == "" {
+		return tagger.Metadata{}, fmt.Errorf("no cached track_data for sng_id %d", item.SngID)
+	}
+
+	var track deezer.GWTrack
+	if err := json.Unmarshal([]byte(item.TrackData), &track); err != nil {
+		return tagger.Metadata{}, fmt.Errorf("parse track_data: %w", err)
+	}
+
 	md := tagger.Metadata{
-		Title:        t.SngTitle,
-		Artist:       t.ArtistString(),
-		Artists:      t.AllArtists(),
-		AlbumArtist:  t.AlbumArtistString(),
-		AlbumArtists: t.MainArtists(),
-		Album:        t.AlbTitle,
-		TrackNumber:  t.TrackNumberInt(),
-		DiscNumber:   t.DiscNumberInt(),
-		Year:         t.ReleaseYear(),
-		Date:         t.ReleaseDate(),
-		Genre:        t.GenreName(),
-		Composer:     strings.Join(t.Contributors["author"], " / "),
-		ISRC:         t.ISRC,
-		Copyright:    t.Copyright,
-		ReplayGain:   t.ReplayGainString(),
+		Title:        track.SngTitle,
+		Artist:       track.ArtistString(),
+		Artists:      track.AllArtists(),
+		AlbumArtist:  track.AlbumArtistString(),
+		AlbumArtists: track.MainArtists(),
+		Album:        track.AlbTitle,
+		TrackNumber:  track.TrackNumberInt(),
+		DiscNumber:   track.DiscNumberInt(),
+		Year:         track.ReleaseYear(),
+		Date:         track.ReleaseDate(),
+		Genre:        track.GenreName(),
+		Composer:     joinSlice(track.Contributors["author"], " / "),
+		ISRC:         track.ISRC,
+		Copyright:    track.Copyright,
+		ReplayGain:   track.ReplayGainString(),
 	}
 
-	if album != nil {
-		md.TotalTracks = album.NumberTrackInt()
-		md.TotalDiscs = album.NumberDiskInt()
-		md.Label = album.LabelName
-		if md.Copyright == "" {
-			md.Copyright = album.Copyright
-		}
-		if md.Genre == "" {
-			md.Genre = deezer.GenreName(album.GenreID)
+	if albumData != "" {
+		var album deezer.GWAlbum
+		if err := json.Unmarshal([]byte(albumData), &album); err == nil {
+			md.TotalTracks = album.NumberTrackInt()
+			md.TotalDiscs = album.NumberDiskInt()
+			md.Label = album.LabelName
+			if md.Copyright == "" {
+				md.Copyright = album.Copyright
+			}
+			if md.Genre == "" {
+				md.Genre = deezer.GenreName(album.GenreID)
+			}
 		}
 	}
 
-	if lyrics != nil {
-		lrc := lyrics.ToLRC()
-		if lrc != "" {
-			// Prefer LRC in the LYRICS tag — Navidrome parses timestamps from it
-			// to produce synced lyrics. Plain text fallback if no sync data.
-			md.Lyrics = lrc
-		} else {
-			md.Lyrics = lyrics.LyricsText
+	if item.LyricsData != "" {
+		var lyrics deezer.GWLyrics
+		if err := json.Unmarshal([]byte(item.LyricsData), &lyrics); err == nil {
+			lrc := lyrics.ToLRC()
+			if lrc != "" {
+				md.Lyrics = lrc
+			} else {
+				md.Lyrics = lyrics.LyricsText
+			}
+			md.SyncedLyrics = lrc
 		}
-		md.SyncedLyrics = lrc
 	}
 
-	if p.fields["cover"] && t.AlbPicture != "" {
-		if data, mime, err := p.dz.FetchCover(ctx, t.AlbPicture, 500); err == nil && len(data) > 0 {
-			md.Cover = data
-			md.CoverMIME = mime
+	return md, nil
+}
+
+func joinSlice(ss []string, sep string) string {
+	result := ""
+	for i, s := range ss {
+		if i > 0 {
+			result += sep
 		}
+		result += s
 	}
-	return md
+	return result
 }

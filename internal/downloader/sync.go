@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"deeznt/internal/deezer"
 	"deeznt/internal/store"
@@ -17,11 +18,12 @@ type SyncResult struct {
 	New     int // newly inserted track rows
 }
 
-// Sync pulls the selected favorite types from Deezer, upserts sources
-// (albums/artists/playlists) as first-class entities, then expands each source
-// to its track list. Re-syncing re-fetches track lists so new tracks are picked
-// up. Loved tracks are synced directly without a source entity.
-func (p *Pipeline) Sync(ctx context.Context, sel deezer.Selection) (SyncResult, error) {
+// Sync pulls the selected favorite types from Deezer, upserts sources as
+// first-class entities, expands each source to tracks, and fetches/caches
+// full track metadata (song.getData + lyrics + album.getData) for each track.
+// All metadata is stored in the DB so download/tag stages need no API calls
+// except re-fetching the track token.
+func (p *Pipeline) Sync(ctx context.Context, sel deezer.Selection, refresh bool) (SyncResult, error) {
 	blocked := func(kind string, id int64) (bool, error) {
 		return p.store.IsBlocked(ctx, kind, id)
 	}
@@ -36,31 +38,13 @@ func (p *Pipeline) Sync(ctx context.Context, sel deezer.Selection) (SyncResult, 
 		const batch = 100
 		for i := 0; i < len(ids); i += batch {
 			end := min(i+batch, len(ids))
-			tracks, err := p.dz.GetTracksData(ctx, ids[i:end])
-			if err != nil {
+			if err := p.syncTrackIDs(ctx, ids[i:end], "track", "", blocked, refresh, &res); err != nil {
 				return res, err
-			}
-			for j := range tracks {
-				t := &tracks[j]
-				if t.SngID == "" {
-					continue
-				}
-				if skip, _ := blocked(deezer.KindTrack, t.ID()); skip {
-					continue
-				}
-				inserted, err := p.store.Upsert(ctx, trackToDiscovered(t, "track", t.SngID))
-				if err != nil {
-					return res, err
-				}
-				res.Total++
-				if inserted {
-					res.New++
-				}
 			}
 		}
 	}
 
-	// 2. Upsert sources (albums/artists/playlists) then expand each to tracks.
+	// 2. Upsert sources then expand each to tracks.
 	sourceSel := deezer.Selection{
 		Albums:    sel.Albums,
 		Artists:   sel.Artists,
@@ -86,15 +70,14 @@ func (p *Pipeline) Sync(ctx context.Context, sel deezer.Selection) (SyncResult, 
 				return res, fmt.Errorf("expand %s %d: %w", src.Kind, src.ID, err)
 			}
 
+			sngIDs := make([]int64, 0, len(favs))
 			for _, fi := range favs {
-				inserted, err := p.store.Upsert(ctx, toDiscovered(fi))
-				if err != nil {
-					return res, err
-				}
-				res.Total++
-				if inserted {
-					res.New++
-				}
+				sngIDs = append(sngIDs, fi.SngID)
+			}
+
+			if err := p.syncTrackIDsWithFavs(ctx, sngIDs, favs, refresh, &res); err != nil {
+				_ = p.store.SetSourceState(ctx, src.Kind, src.ID, store.SourceStateFailed, err.Error())
+				return res, err
 			}
 
 			_ = p.store.SetSourceState(ctx, src.Kind, src.ID, store.SourceStateSynced, "")
@@ -105,9 +88,115 @@ func (p *Pipeline) Sync(ctx context.Context, sel deezer.Selection) (SyncResult, 
 	return res, nil
 }
 
-// EnqueueIDs adds specific ids (of the given kind: track|album|artist|playlist)
-// to the queue as `queued`. For non-track kinds it also upserts a source entity.
-// Returns the number of tracks queued.
+// syncTrackIDs fetches song.getData for each ID and upserts with metadata.
+func (p *Pipeline) syncTrackIDs(ctx context.Context, ids []int64, sourceType, sourceID string, blocked deezer.BlockedFunc, refresh bool, res *SyncResult) error {
+	tracks, err := p.dz.GetTracksData(ctx, ids)
+	if err != nil {
+		return err
+	}
+	favs := make([]deezer.FavItem, 0, len(tracks))
+	for j := range tracks {
+		t := &tracks[j]
+		if t.SngID == "" {
+			continue
+		}
+		if skip, _ := blocked(deezer.KindTrack, t.ID()); skip {
+			continue
+		}
+		sid := sourceID
+		if sid == "" {
+			sid = t.SngID
+		}
+		favs = append(favs, trackGWToFav(t, sourceType, sid))
+	}
+	return p.syncTrackIDsWithFavs(ctx, ids, favs, refresh, res)
+}
+
+// syncTrackIDsWithFavs upserts tracks and fetches/caches their metadata.
+func (p *Pipeline) syncTrackIDsWithFavs(ctx context.Context, ids []int64, favs []deezer.FavItem, refresh bool, res *SyncResult) error {
+	// Fetch full song.getData for each track in parallel (bounded concurrency).
+	type metaResult struct {
+		fi         deezer.FavItem
+		trackData  string
+		lyricsData string
+		err        error
+	}
+
+	sem := make(chan struct{}, p.cfg.Download.Concurrency)
+	results := make([]metaResult, len(favs))
+	var wg sync.WaitGroup
+
+	for i, fi := range favs {
+		// Skip if already cached and not refreshing.
+		if !refresh {
+			existing, err := p.store.Get(ctx, fi.SngID)
+			if err == nil && existing != nil && existing.TrackData != "" {
+				results[i] = metaResult{fi: fi, trackData: existing.TrackData, lyricsData: existing.LyricsData}
+				continue
+			}
+		}
+
+		wg.Add(1)
+		i, fi := i, fi
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+
+			// Fetch full track data.
+			track, trackData, err := p.dz.GetTrackWithRaw(ctx, fi.SngID)
+			if err != nil {
+				results[i] = metaResult{fi: fi, err: fmt.Errorf("song.getData %d: %w", fi.SngID, err)}
+				return
+			}
+
+			// Fetch lyrics if available.
+			var lyricsData string
+			if track.LyricsID != 0 {
+				if ld, err := p.dz.GetLyricsRaw(ctx, fi.SngID); err == nil {
+					lyricsData = ld
+				}
+				// Lyrics errors are non-fatal — we still have the track.
+			}
+
+			// Cache album.getData (shared across all tracks on the same album).
+			if albID := track.AlbumID(); albID > 0 {
+				if cached, _ := p.store.GetAlbumCache(ctx, albID); cached == "" || refresh {
+					if albumData, err := p.dz.GetAlbumRaw(ctx, albID); err == nil {
+						_ = p.store.UpsertAlbumCache(ctx, albID, albumData)
+					}
+				}
+			}
+
+			results[i] = metaResult{fi: fi, trackData: trackData, lyricsData: lyricsData}
+		}()
+	}
+	wg.Wait()
+
+	// Upsert all tracks.
+	for _, r := range results {
+		if r.fi.SngID == 0 {
+			continue // skipped (already cached)
+		}
+		if r.err != nil {
+			p.log.Warn("failed to fetch track metadata at sync time", "sng_id", r.fi.SngID, "err", r.err)
+			// Still upsert with empty metadata — download will re-fetch.
+		}
+		d := toDiscoveredWithMeta(r.fi, r.trackData, r.lyricsData)
+		inserted, err := p.store.Upsert(ctx, d)
+		if err != nil {
+			return err
+		}
+		res.Total++
+		if inserted {
+			res.New++
+		}
+	}
+	return nil
+}
+
+// EnqueueIDs adds specific ids (of the given kind) to the queue as `queued`.
+// For non-track kinds it also upserts a source entity.
 func (p *Pipeline) EnqueueIDs(ctx context.Context, kind string, ids []int64) (int, error) {
 	blocked := func(k string, id int64) (bool, error) {
 		return p.store.IsBlocked(ctx, k, id)
@@ -122,16 +211,30 @@ func (p *Pipeline) EnqueueIDs(ctx context.Context, kind string, ids []int64) (in
 
 		var favs []deezer.FavItem
 		if kind == deezer.KindTrack {
-			t, err := p.dz.GetTrack(ctx, id)
+			track, trackData, err := p.dz.GetTrackWithRaw(ctx, id)
 			if err != nil {
 				return queued, err
 			}
-			if t.SngID != "" {
-				favs = []deezer.FavItem{trackGWToFav(t, kind, fmt.Sprintf("%d", id))}
+			if track.SngID != "" {
+				fi := trackGWToFav(track, kind, fmt.Sprintf("%d", id))
+				lyricsData := ""
+				if track.LyricsID != 0 {
+					lyricsData, _ = p.dz.GetLyricsRaw(ctx, id)
+				}
+				if albID := track.AlbumID(); albID > 0 {
+					if cached, _ := p.store.GetAlbumCache(ctx, albID); cached == "" {
+						if albumData, err := p.dz.GetAlbumRaw(ctx, albID); err == nil {
+							_ = p.store.UpsertAlbumCache(ctx, albID, albumData)
+						}
+					}
+				}
+				if _, err := p.store.Upsert(ctx, toDiscoveredWithMeta(fi, trackData, lyricsData)); err != nil {
+					return queued, err
+				}
+				favs = []deezer.FavItem{fi}
 			}
 		} else {
 			src := deezer.SourceItem{Kind: kind, ID: id}
-			// Fetch name from Deezer for the source entity.
 			switch kind {
 			case deezer.KindAlbum:
 				alb, err := p.dz.GetAlbum(ctx, id)
@@ -148,14 +251,20 @@ func (p *Pipeline) EnqueueIDs(ctx context.Context, kind string, ids []int64) (in
 			if err != nil {
 				return queued, err
 			}
+			// Fetch metadata for each track.
+			var syncRes SyncResult
+			sngIDs := make([]int64, 0, len(favs))
+			for _, fi := range favs {
+				sngIDs = append(sngIDs, fi.SngID)
+			}
+			if err := p.syncTrackIDsWithFavs(ctx, sngIDs, favs, false, &syncRes); err != nil {
+				return queued, err
+			}
 			_ = p.store.SetSourceTrackCount(ctx, kind, id, len(favs))
 			_ = p.store.SetSourceState(ctx, kind, id, store.SourceStateSynced, "")
 		}
 
 		for _, fi := range favs {
-			if _, err := p.store.Upsert(ctx, toDiscovered(fi)); err != nil {
-				return queued, err
-			}
 			if err := p.store.SetState(ctx, fi.SngID, store.StateQueued); err != nil {
 				return queued, err
 			}
@@ -179,7 +288,7 @@ func (p *Pipeline) ForceAll(ctx context.Context, ids []int64) (int, error) {
 	return p.store.Requeue(ctx, ids, true)
 }
 
-// ForceMissing requeues only finished/downloaded items whose file is absent from disk.
+// ForceMissing requeues only finished items whose file is absent from disk.
 func (p *Pipeline) ForceMissing(ctx context.Context) (int, error) {
 	missing, err := p.MissingFiles(ctx)
 	if err != nil {
@@ -192,7 +301,7 @@ func (p *Pipeline) ForceMissing(ctx context.Context) (int, error) {
 	return p.store.Requeue(ctx, ids, false)
 }
 
-// MissingFiles returns finished/downloaded items whose file no longer exists on disk.
+// MissingFiles returns finished items whose file no longer exists on disk.
 func (p *Pipeline) MissingFiles(ctx context.Context) ([]*store.Item, error) {
 	items, err := p.store.FinishedItems(ctx)
 	if err != nil {
@@ -222,6 +331,13 @@ func toDiscovered(fi deezer.FavItem) store.Discovered {
 		SourceType:  fi.SourceType,
 		SourceID:    fi.SourceID,
 	}
+}
+
+func toDiscoveredWithMeta(fi deezer.FavItem, trackData, lyricsData string) store.Discovered {
+	d := toDiscovered(fi)
+	d.TrackData = trackData
+	d.LyricsData = lyricsData
+	return d
 }
 
 func trackToDiscovered(t *deezer.GWTrack, sourceType, sourceID string) store.Discovered {

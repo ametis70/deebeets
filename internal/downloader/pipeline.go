@@ -5,6 +5,7 @@ package downloader
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -131,11 +132,10 @@ func (p *Pipeline) RunDownloads(ctx context.Context) (DownloadResult, error) {
 			continue
 		}
 
-		// Download the batch in parallel; collect per-item results.
+		// Download the batch in parallel.
 		type result struct {
 			item *store.Item
 			err  error
-			job  *converter.ConvertJob // non-nil on success, for conversion
 		}
 		results := make([]result, len(batch))
 		var wg sync.WaitGroup
@@ -143,23 +143,18 @@ func (p *Pipeline) RunDownloads(ctx context.Context) (DownloadResult, error) {
 			wg.Add(1)
 			go func(idx int, item *store.Item) {
 				defer wg.Done()
-				job, err := p.downloadOne(ctx, item)
-				results[idx] = result{item: item, err: err, job: job}
+				err := p.downloadOne(ctx, item)
+				results[idx] = result{item: item, err: err}
 			}(i, it)
 		}
 		wg.Wait()
 
-		// Process results.
 		var failedIDs []int64
 		var failedErrs []string
-		var convertJobs []converter.ConvertJob
 
 		for _, r := range results {
 			if r.err == nil {
 				res.Downloaded++
-				if r.job != nil {
-					convertJobs = append(convertJobs, *r.job)
-				}
 				continue
 			}
 			if deezer.IsRateLimited(r.err) {
@@ -183,30 +178,148 @@ func (p *Pipeline) RunDownloads(ctx context.Context) (DownloadResult, error) {
 		}
 		res.Failed += len(failedIDs)
 
-		// Convert successful downloads in the background so the next download
-		// batch starts immediately.
-		if p.conv != nil && len(convertJobs) > 0 {
-			jobs := convertJobs
-			p.convertingCount.Add(int32(len(jobs)))
-			go func() {
-				defer p.convertingCount.Add(-int32(len(jobs)))
-				converted, failed := p.conv.RunAll(ctx, jobs)
-				for _, id := range converted {
-					_ = p.store.MarkConverted(ctx, id)
-				}
-				for id, errMsg := range failed {
-					p.log.Warn("conversion failed", "sng_id", id, "err", errMsg)
-					_ = p.store.MarkFailedConvert(ctx, id, errMsg)
-				}
-			}()
-		}
-
 		if d := p.cfg.Download.InterBatchDelay; d > 0 {
 			if !sleepCtx(ctx, d) {
 				return res, ctx.Err()
 			}
 		}
 	}
+}
+
+// TagResult summarises a completed tag run.
+type TagResult struct {
+	Tagged int
+	Failed int
+}
+
+// RunTag processes all items in state=downloaded: builds metadata from the
+// cached JSON in the DB, writes tags to the audio file, writes .lrc and
+// cover/artist images, then marks the item as tagged.
+// It is parallelised up to cfg.Tag.Concurrency.
+func (p *Pipeline) RunTag(ctx context.Context) (TagResult, error) {
+	var res TagResult
+
+	for {
+		if ctx.Err() != nil {
+			return res, ctx.Err()
+		}
+
+		items, err := p.store.List(ctx, []string{store.StateDownloaded}, p.cfg.Tag.Concurrency)
+		if err != nil {
+			return res, err
+		}
+		if len(items) == 0 {
+			return res, nil
+		}
+
+		// Claim items for tagging (one at a time up to concurrency).
+		var batch []*store.Item
+		for range items {
+			it2, ok, err := p.store.ClaimTag(ctx)
+			if err != nil || !ok {
+				continue
+			}
+			batch = append(batch, it2)
+		}
+		if len(batch) == 0 {
+			return res, nil
+		}
+
+		type tagResult struct {
+			item *store.Item
+			err  error
+		}
+		tagResults := make([]tagResult, len(batch))
+		var wg sync.WaitGroup
+		for i, it := range batch {
+			wg.Add(1)
+			i, it := i, it
+			go func() {
+				defer wg.Done()
+				tagResults[i] = tagResult{item: it, err: p.tagOne(ctx, it)}
+			}()
+		}
+		wg.Wait()
+
+		for _, r := range tagResults {
+			if r.err != nil {
+				p.log.Error("tagging failed", "sng_id", r.item.SngID, "err", r.err)
+				_ = p.store.MarkFailedTag(ctx, r.item.SngID, r.err.Error())
+				res.Failed++
+				continue
+			}
+			_ = p.store.MarkTagged(ctx, r.item.SngID)
+			res.Tagged++
+
+			// If no converter, go straight to converted (terminal).
+			if p.conv == nil {
+				_ = p.store.MarkConverted(ctx, r.item.SngID)
+			}
+		}
+	}
+}
+
+// tagOne writes tags, cover, artist image, and .lrc for one item using
+// metadata loaded entirely from the DB cache.
+func (p *Pipeline) tagOne(ctx context.Context, item *store.Item) error {
+	// Parse ALB_ID from track_data and load album cache.
+	var albumData string
+	albID := extractAlbIDFromTrackData(item.TrackData)
+	if albID > 0 {
+		albumData, _ = p.store.GetAlbumCache(ctx, albID)
+	}
+
+	md, err := buildMetadataFromCache(item, albumData)
+	if err != nil {
+		return err
+	}
+
+	// Fetch cover image from CDN if not already on disk.
+	albumDir := filepath.Dir(filepath.Join(p.musicDir, item.FilePath))
+	if p.fields["cover"] {
+		albPicture := extractAlbPictureFromTrackData(item.TrackData)
+		if albPicture != "" {
+			if len(md.Cover) == 0 {
+				data, mime, err := p.dz.FetchCover(ctx, albPicture, 500)
+				if err == nil && len(data) > 0 {
+					md.Cover = data
+					md.CoverMIME = mime
+				}
+			}
+		}
+
+		// Fetch artist image for folder.jpg in artist dir.
+		artPicture := extractArtPictureFromTrackData(item.TrackData)
+		artistDir := filepath.Dir(albumDir)
+		folderPath := filepath.Join(artistDir, "folder.jpg")
+		if artPicture != "" {
+			if _, err := os.Stat(folderPath); os.IsNotExist(err) {
+				data, _, err := p.dz.FetchArtistImage(ctx, artPicture, 500)
+				if err == nil && len(data) > 0 {
+					_ = os.WriteFile(folderPath, data, 0o644)
+				}
+			}
+		}
+	}
+
+	// Write tags to the audio file.
+	fullPath := filepath.Join(p.musicDir, item.FilePath)
+	if err := tagger.Write(fullPath, item.Format, md, p.fields); err != nil {
+		return fmt.Errorf("write tags: %w", err)
+	}
+
+	// Write cover.jpg.
+	if err := tagger.WriteCoverFile(albumDir, md.Cover); err != nil {
+		p.log.Warn("failed to write cover.jpg", "path", albumDir, "err", err)
+	}
+
+	// Write .lrc file.
+	if md.SyncedLyrics != "" {
+		lrcPath := fullPath[:len(fullPath)-len(filepath.Ext(fullPath))] + ".lrc"
+		_ = os.WriteFile(lrcPath, []byte(md.SyncedLyrics), 0o644)
+	}
+
+	return nil
 }
 
 // ConvertResult summarises a completed convert run.
@@ -229,7 +342,9 @@ func (p *Pipeline) RunConvert(ctx context.Context) (ConvertResult, error) {
 	}
 	defer p.convertRunning.Store(false)
 
-	downloaded, err := p.store.List(ctx, []string{store.StateDownloaded}, 0)
+	// Collect items that need conversion: state=tagged (not yet converted)
+	// and state=converted where the converted file is missing.
+	tagged, err := p.store.List(ctx, []string{store.StateTagged}, 0)
 	if err != nil {
 		return res, err
 	}
@@ -239,7 +354,7 @@ func (p *Pipeline) RunConvert(ctx context.Context) (ConvertResult, error) {
 	}
 
 	var jobs []converter.ConvertJob
-	for _, it := range append(downloaded, finished...) {
+	for _, it := range append(tagged, finished...) {
 		if it.FilePath == "" {
 			continue
 		}
@@ -252,7 +367,8 @@ func (p *Pipeline) RunConvert(ctx context.Context) (ConvertResult, error) {
 			continue
 		}
 		if _, err := os.Stat(outPath); err == nil {
-			if it.State == store.StateDownloaded {
+			// Already converted — if still tagged, mark converted.
+			if it.State == store.StateTagged {
 				_ = p.store.MarkConverted(ctx, it.SngID)
 			}
 			continue
@@ -279,11 +395,8 @@ func (p *Pipeline) RunConvert(ctx context.Context) (ConvertResult, error) {
 }
 
 // ForceReconvert prepares items for reconversion.
-// mode="all": deletes existing converted files for all finished items and resets
-//             them to state=downloaded so RunConvert will pick them up.
-// mode="failed": retries only items currently stuck at state=downloaded
-//                (conversion previously failed or was skipped).
-// Returns the number of items queued for reconversion.
+// mode="all": deletes existing converted files and resets items to state=tagged.
+// mode="failed": retries only state=failed_convert items.
 func (p *Pipeline) ForceReconvert(ctx context.Context, mode string) (int, error) {
 	if p.conv == nil {
 		return 0, fmt.Errorf("convert is not enabled")
@@ -305,10 +418,9 @@ func (p *Pipeline) ForceReconvert(ctx context.Context, mode string) (int, error)
 			if err != nil || outPath == "" {
 				continue
 			}
-			// Delete the existing converted file so RunConvert re-creates it.
 			_ = os.Remove(outPath)
-			// Reset to downloaded so the item is picked up by RunConvert.
-			if err := p.store.SetState(ctx, it.SngID, store.StateDownloaded); err != nil {
+			// Reset to tagged so RunConvert picks it up.
+			if err := p.store.SetState(ctx, it.SngID, store.StateTagged); err != nil {
 				return n, err
 			}
 			n++
@@ -316,12 +428,8 @@ func (p *Pipeline) ForceReconvert(ctx context.Context, mode string) (int, error)
 		return n, nil
 
 	case "failed":
-		// Items at state=downloaded are pending or failed conversion.
-		items, err := p.store.List(ctx, []string{store.StateDownloaded}, 0)
-		if err != nil {
-			return 0, err
-		}
-		return len(items), nil // already in the right state, RunConvert will retry
+		n, err := p.store.RequeueAllFailedConverts(ctx)
+		return n, err
 
 	default:
 		return 0, fmt.Errorf("reconvert mode must be 'all' or 'failed', got %q", mode)
@@ -414,4 +522,54 @@ func itemIDs(items []*store.Item) []int64 {
 		ids[i] = it.SngID
 	}
 	return ids
+}
+
+// extractAlbIDFromTrackData parses ALB_ID from cached track JSON.
+func extractAlbIDFromTrackData(trackData string) int64 {
+	if trackData == "" {
+		return 0
+	}
+	var v struct {
+		AlbID string `json:"ALB_ID"`
+	}
+	if err := json.Unmarshal([]byte(trackData), &v); err != nil {
+		return 0
+	}
+	var id int64
+	fmt.Sscanf(v.AlbID, "%d", &id)
+	return id
+}
+
+// extractAlbPictureFromTrackData parses ALB_PICTURE hash from cached track JSON.
+func extractAlbPictureFromTrackData(trackData string) string {
+	if trackData == "" {
+		return ""
+	}
+	var v struct {
+		AlbPicture string `json:"ALB_PICTURE"`
+	}
+	_ = json.Unmarshal([]byte(trackData), &v)
+	return v.AlbPicture
+}
+
+// extractArtPictureFromTrackData extracts the main artist ART_PICTURE from ARTISTS array.
+func extractArtPictureFromTrackData(trackData string) string {
+	if trackData == "" {
+		return ""
+	}
+	var v struct {
+		Artists []struct {
+			ArtPicture string `json:"ART_PICTURE"`
+			RoleID     string `json:"ROLE_ID"`
+		} `json:"ARTISTS"`
+	}
+	if err := json.Unmarshal([]byte(trackData), &v); err != nil {
+		return ""
+	}
+	for _, a := range v.Artists {
+		if a.RoleID == "0" {
+			return a.ArtPicture
+		}
+	}
+	return ""
 }
