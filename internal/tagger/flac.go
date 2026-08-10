@@ -78,29 +78,29 @@ func buildVorbisComments(md Metadata, f FieldSet) []vorbisTag {
 
 type vorbisTag struct{ Key, Val string }
 
-// writeOggOpus rewrites tags on an Ogg Opus file using ffmpeg. ffmpeg supports
-// Vorbis comments on Opus and handles multi-value tags via repeated -metadata flags.
+// writeOggOpus rewrites tags on an Ogg Opus file using opustags, which
+// correctly writes each Vorbis comment as a separate field — including
+// multi-value tags like ARTISTS and ALBUMARTISTS. ffmpeg joins repeated
+// -metadata values with ";" which breaks multi-value support.
 func writeOggOpus(path string, md Metadata, f FieldSet) error {
 	tags := buildVorbisComments(md, f)
 	if len(tags) == 0 {
 		return nil
 	}
 
-	// Write to a temp file then replace the original.
-	tmp := path + ".tmp"
-	defer os.Remove(tmp)
-
-	argv := []string{"ffmpeg", "-i", path, "-map_metadata", "-1"}
+	// opustags -D clears all existing tags, then -s KEY=VALUE sets each one.
+	// Repeated -s flags produce separate Vorbis comment entries (true multi-value).
+	argv := []string{"opustags", "-i", "-D"}
 	for _, t := range tags {
-		argv = append(argv, "-metadata", t.Key+"="+t.Val)
+		argv = append(argv, "-s", t.Key+"="+t.Val)
 	}
-	argv = append(argv, "-c:a", "copy", "-y", tmp)
+	argv = append(argv, path)
 
 	out, err := exec.Command(argv[0], argv[1:]...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("opus tag write: %w: %s", err, strings.TrimSpace(string(out)))
 	}
-	return os.Rename(tmp, path)
+	return nil
 }
 
 // writeFLAC writes Vorbis comments (and an embedded picture) to a FLAC file.
