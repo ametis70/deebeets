@@ -38,6 +38,7 @@ auto        = true
 dest        = "/music/ogg"
 concurrency = 2
 format      = "opus"
+# Adjust -b:a to change the output bitrate. Common values: 96k, 128k, 160k, 192k.
 ffmpeg_args = "ffmpeg -i $source -y -vn -c:a libopus -b:a 160k -vbr on -compression_level 10 $dest"
 
 [ratelimit]

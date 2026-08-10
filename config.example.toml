@@ -57,6 +57,7 @@ concurrency = 2
 # Target format name (used for output file extension).
 format  = "opus"
 # ffmpeg command template. Use $source and $dest as placeholders.
+# Adjust -b:a to change the output bitrate. Common values: 96k, 128k, 160k, 192k.
 ffmpeg_args = "ffmpeg -i $source -y -vn -c:a libopus -b:a 160k -vbr on -compression_level 10 $dest"
 
 [ratelimit]
