@@ -45,6 +45,12 @@ tracks    = true
 max_attempts = 3
 backoff      = "5s"
 
+[tag]
+# Automatically tag downloaded files after each download batch.
+auto        = true
+# Number of files tagged in parallel.
+concurrency = 3
+
 [convert]
 # Enable ffmpeg conversion of downloaded files.
 enabled = false

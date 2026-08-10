@@ -24,6 +24,7 @@ type Config struct {
 	Paths         Paths         `koanf:"paths"`
 	Sync          Sync          `koanf:"sync"`
 	Download      Download      `koanf:"download"`
+	Tag           Tag           `koanf:"tag"`
 	Convert       Convert       `koanf:"convert"`
 	Notifications Notifications `koanf:"notifications"`
 	RateLimit     RateLimit     `koanf:"ratelimit"`
@@ -80,7 +81,15 @@ type Download struct {
 	Retry     RetryPolicy `koanf:"retry"`
 }
 
-// Convert controls the optional post-download ffmpeg conversion stage.
+// Tag controls the post-download tagging stage.
+type Tag struct {
+	// Auto triggers tagging automatically after each download batch.
+	Auto bool `koanf:"auto"`
+	// Concurrency is the number of files tagged in parallel.
+	Concurrency int `koanf:"concurrency"`
+}
+
+// Convert controls the optional post-tag ffmpeg conversion stage.
 type Convert struct {
 	// Enabled controls whether conversion runs at all.
 	Enabled bool `koanf:"enabled"`
@@ -162,6 +171,9 @@ func Defaults() map[string]any {
 		"download.favorites.tracks":    true,
 		"download.retry.max_attempts":  3,
 		"download.retry.backoff":       "5s",
+
+		"tag.auto":        true,
+		"tag.concurrency": 3,
 
 		"convert.enabled":     false,
 		"convert.auto":        false,
@@ -270,6 +282,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Download.Concurrency < 1 {
 		return fmt.Errorf("download.concurrency must be >= 1")
+	}
+	if c.Tag.Concurrency < 1 {
+		return fmt.Errorf("tag.concurrency must be >= 1")
 	}
 	if len(c.Deezer.FormatPriority) == 0 {
 		return fmt.Errorf("deezer.format_priority must list at least one format")

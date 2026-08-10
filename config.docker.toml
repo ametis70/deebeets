@@ -32,6 +32,10 @@ tracks    = true
 max_attempts = 3
 backoff      = "5s"
 
+[tag]
+auto        = true
+concurrency = 3
+
 [convert]
 enabled     = true
 auto        = true
