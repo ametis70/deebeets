@@ -57,6 +57,9 @@ func (f *fakeController) BlocklistList(context.Context) ([]store.Block, error)  
 func (f *fakeController) Items(context.Context, []string, int) ([]store.Item, error) {
 	return []store.Item{{SngID: 1, State: "finished", Title: "T"}}, nil
 }
+func (f *fakeController) Sources(context.Context, []string) ([]store.Source, error) {
+	return []store.Source{{Kind: "album", ExtID: 502723, Name: "Plastic Beach", Artist: "Gorillaz", State: "synced", TrackCount: 16}}, nil
+}
 
 func startServer(t *testing.T) (*Client, *fakeController) {
 	t.Helper()

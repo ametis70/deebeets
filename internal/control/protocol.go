@@ -35,6 +35,7 @@ type Controller interface {
 	Reconvert(ctx context.Context, mode string) (int, error)
 
 	Items(ctx context.Context, states []string, limit int) ([]store.Item, error)
+	Sources(ctx context.Context, kinds []string) ([]store.Source, error)
 }
 
 // Selection mirrors deezer.Selection over the wire.
@@ -85,6 +86,11 @@ type BlocklistRequest struct {
 // ItemsResponse carries a list of items.
 type ItemsResponse struct {
 	Items []store.Item `json:"items"`
+}
+
+// SourcesResponse carries a list of sources.
+type SourcesResponse struct {
+	Sources []store.Source `json:"sources"`
 }
 
 // CountResponse reports how many items an action affected.

@@ -48,6 +48,7 @@ func (s *Server) Listen() error {
 	mux.HandleFunc("POST /convert/start", s.handleConvertStart)
 	mux.HandleFunc("POST /reconvert", s.handleReconvert)
 	mux.HandleFunc("GET /items", s.handleItems)
+	mux.HandleFunc("GET /sources", s.handleSources)
 	s.httpServer = &http.Server{Handler: mux}
 	return nil
 }
@@ -222,6 +223,19 @@ func (s *Server) handleReconvert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, CountResponse{Count: n})
+}
+
+func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) {
+	var kinds []string
+	if q := r.URL.Query().Get("kind"); q != "" {
+		kinds = splitCSV(q)
+	}
+	sources, err := s.ctrl.Sources(r.Context(), kinds)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, SourcesResponse{Sources: sources})
 }
 
 func (s *Server) handleItems(w http.ResponseWriter, r *http.Request) {

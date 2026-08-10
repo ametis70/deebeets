@@ -177,3 +177,16 @@ func (d *Daemon) Items(ctx context.Context, states []string, limit int) ([]store
 	}
 	return out, nil
 }
+
+// Sources lists sources of the given kinds.
+func (d *Daemon) Sources(ctx context.Context, kinds []string) ([]store.Source, error) {
+	srcs, err := d.store.ListSources(ctx, kinds)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]store.Source, 0, len(srcs))
+	for _, s := range srcs {
+		out = append(out, *s)
+	}
+	return out, nil
+}

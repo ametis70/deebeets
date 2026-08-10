@@ -143,6 +143,17 @@ func (c *Client) Reconvert(ctx context.Context, mode string) (int, error) {
 	return out.Count, err
 }
 
+// Sources lists sources of the given kinds (album|artist|playlist).
+func (c *Client) Sources(ctx context.Context, kinds []string) ([]store.Source, error) {
+	path := "/sources"
+	if len(kinds) > 0 {
+		path += "?kind=" + joinCSV(kinds)
+	}
+	var out SourcesResponse
+	err := c.do(ctx, http.MethodGet, path, nil, &out)
+	return out.Sources, err
+}
+
 // Items lists items in the given states.
 func (c *Client) Items(ctx context.Context, states []string) ([]store.Item, error) {
 	path := "/items"
