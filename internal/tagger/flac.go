@@ -82,21 +82,25 @@ type vorbisTag struct{ Key, Val string }
 // correctly writes each Vorbis comment as a separate field — including
 // multi-value tags like ARTISTS and ALBUMARTISTS. ffmpeg joins repeated
 // -metadata values with ";" which breaks multi-value support.
+// --raw is required to handle UTF-8 characters (e.g. ©) when the container
+// locale is POSIX/ASCII.
 func writeOggOpus(path string, md Metadata, f FieldSet) error {
 	tags := buildVorbisComments(md, f)
 	if len(tags) == 0 {
 		return nil
 	}
 
-	// opustags -D clears all existing tags, then -s KEY=VALUE sets each one.
+	// opustags --raw -i -D clears all existing tags, then -s KEY=VALUE sets each one.
 	// Repeated -s flags produce separate Vorbis comment entries (true multi-value).
-	argv := []string{"opustags", "-i", "-D"}
+	argv := []string{"opustags", "--raw", "-i", "-D"}
 	for _, t := range tags {
 		argv = append(argv, "-s", t.Key+"="+t.Val)
 	}
 	argv = append(argv, path)
 
-	out, err := exec.Command(argv[0], argv[1:]...).CombinedOutput()
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Env = append(os.Environ(), "LANG=C.UTF-8", "LC_ALL=C.UTF-8")
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("opus tag write: %w: %s", err, strings.TrimSpace(string(out)))
 	}
