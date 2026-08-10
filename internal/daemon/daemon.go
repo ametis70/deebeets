@@ -302,8 +302,12 @@ func (d *Daemon) runDownload(ctx context.Context) {
 		}
 	}()
 
-	// Notify: downloads starting.
-	d.notifier.Send(notify.EventDownloadsStarted, nil)
+	// Notify: downloads starting with total queued count.
+	counts, _ := d.store.CountByState(dlCtx)
+	queued := counts[store.StateQueued] + counts[store.StateWaiting]
+	d.notifier.Send(notify.EventDownloadsStarted, map[string]any{
+		"queued": queued,
+	})
 
 	res, err := d.pipe.RunDownloads(dlCtx)
 	if err != nil && dlCtx.Err() == nil {
