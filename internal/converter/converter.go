@@ -118,16 +118,19 @@ func (r *Runner) convertOne(ctx context.Context, job ConvertJob) error {
 }
 
 func (r *Runner) runFFmpeg(ctx context.Context, src, dst string) error {
-	tmpl := r.cfg.FFmpegArgs
-	tmpl = strings.ReplaceAll(tmpl, "$source", src)
-	tmpl = strings.ReplaceAll(tmpl, "$dest", dst)
-
-	argv, err := splitArgs(tmpl)
+	// Split the template first, then substitute $source/$dest as whole tokens.
+	// This avoids path splitting on spaces inside directory names.
+	argv, err := splitArgs(r.cfg.FFmpegArgs)
 	if err != nil {
 		return fmt.Errorf("parse ffmpeg_args: %w", err)
 	}
 	if len(argv) == 0 {
 		return fmt.Errorf("ffmpeg_args is empty")
+	}
+	for i, arg := range argv {
+		arg = strings.ReplaceAll(arg, "$source", src)
+		arg = strings.ReplaceAll(arg, "$dest", dst)
+		argv[i] = arg
 	}
 
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)

@@ -67,10 +67,18 @@ func printStatus(stage, lastSync string, counts map[string]int) {
 	}
 	fmt.Println("queue:")
 	tw := tabwriter.NewWriter(cmdOut, 0, 0, 2, ' ', 0)
+	// Labels for states that benefit from extra context.
+	labels := map[string]string{
+		store.StateDownloaded: "downloaded (pending convert)",
+	}
 	seen := map[string]bool{}
 	for _, st := range stateOrder {
 		if n, ok := counts[st]; ok {
-			fmt.Fprintf(tw, "  %s\t%d\n", st, n)
+			label := st
+			if l, ok := labels[st]; ok {
+				label = l
+			}
+			fmt.Fprintf(tw, "  %s\t%d\n", label, n)
 			seen[st] = true
 		}
 	}
