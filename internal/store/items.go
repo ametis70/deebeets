@@ -168,6 +168,18 @@ func (s *Store) CountByState(ctx context.Context) (map[string]int, error) {
 	return out, rows.Err()
 }
 
+// UpdateTrackData refreshes the cached track_data JSON for an existing item.
+func (s *Store) UpdateTrackData(ctx context.Context, sngID int64, trackData string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE items SET track_data = ?, updated_at = ? WHERE sng_id = ?`,
+		trackData, time.Now().Unix(), sngID)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 // ClaimDownload atomically claims the oldest pending track for downloading,
 // incrementing its attempt counter. Returns (nil, false, nil) when the queue
 // is empty.
