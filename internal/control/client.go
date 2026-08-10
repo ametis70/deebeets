@@ -136,6 +136,13 @@ func (c *Client) ConvertStart(ctx context.Context) error {
 	return c.do(ctx, http.MethodPost, "/convert/start", nil, nil)
 }
 
+// Reconvert forces reconversion by mode ("all" or "failed").
+func (c *Client) Reconvert(ctx context.Context, mode string) (int, error) {
+	var out CountResponse
+	err := c.do(ctx, http.MethodPost, "/reconvert", ReconvertRequest{Mode: mode}, &out)
+	return out.Count, err
+}
+
 // Items lists items in the given states.
 func (c *Client) Items(ctx context.Context, states []string) ([]store.Item, error) {
 	path := "/items"

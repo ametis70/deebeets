@@ -94,6 +94,23 @@ func (d *Daemon) ConvertStart(ctx context.Context) error {
 	}
 }
 
+// Reconvert forces reconversion by mode ("all" or "failed").
+func (d *Daemon) Reconvert(ctx context.Context, mode string) (int, error) {
+	if d.pipe == nil {
+		return 0, fmt.Errorf("not logged in")
+	}
+	n, err := d.pipe.ForceReconvert(d.ctx, mode)
+	if err != nil {
+		return 0, err
+	}
+	// Trigger a convert run for the newly queued items.
+	select {
+	case d.orchCh <- orchConvert:
+	default:
+	}
+	return n, nil
+}
+
 // Redownload forces re-download by mode ("all", "missing", or "failed").
 func (d *Daemon) Redownload(ctx context.Context, mode string, ids []int64) (int, error) {
 	var n int

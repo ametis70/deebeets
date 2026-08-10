@@ -5,6 +5,7 @@ package downloader
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -255,7 +256,56 @@ func (p *Pipeline) RunConvert(ctx context.Context) error {
 	return nil
 }
 
-// claimBatch claims up to Concurrency tracks for this batch.
+// ForceReconvert prepares items for reconversion.
+// mode="all": deletes existing converted files for all finished items and resets
+//             them to state=downloaded so RunConvert will pick them up.
+// mode="failed": retries only items currently stuck at state=downloaded
+//                (conversion previously failed or was skipped).
+// Returns the number of items queued for reconversion.
+func (p *Pipeline) ForceReconvert(ctx context.Context, mode string) (int, error) {
+	if p.conv == nil {
+		return 0, fmt.Errorf("convert is not enabled")
+	}
+
+	switch mode {
+	case "all":
+		items, err := p.store.FinishedItems(ctx)
+		if err != nil {
+			return 0, err
+		}
+		var n int
+		for _, it := range items {
+			if it.FilePath == "" {
+				continue
+			}
+			srcPath := filepath.Join(p.musicDir, it.FilePath)
+			outPath, err := p.conv.OutputPath(srcPath)
+			if err != nil || outPath == "" {
+				continue
+			}
+			// Delete the existing converted file so RunConvert re-creates it.
+			_ = os.Remove(outPath)
+			// Reset to downloaded so the item is picked up by RunConvert.
+			if err := p.store.SetState(ctx, it.SngID, store.StateDownloaded); err != nil {
+				return n, err
+			}
+			n++
+		}
+		return n, nil
+
+	case "failed":
+		// Items at state=downloaded are pending or failed conversion.
+		items, err := p.store.List(ctx, []string{store.StateDownloaded}, 0)
+		if err != nil {
+			return 0, err
+		}
+		return len(items), nil // already in the right state, RunConvert will retry
+
+	default:
+		return 0, fmt.Errorf("reconvert mode must be 'all' or 'failed', got %q", mode)
+	}
+}
+
 func (p *Pipeline) claimBatch(ctx context.Context) []*store.Item {
 	n := p.cfg.Download.Concurrency
 	batch := make([]*store.Item, 0, n)

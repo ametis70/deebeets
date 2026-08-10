@@ -28,8 +28,11 @@ type Controller interface {
 	BlocklistRemove(ctx context.Context, kind string, ids []int64) error
 	BlocklistList(ctx context.Context) ([]store.Block, error)
 
-	// ConvertStart triggers a manual convert run.
+	// ConvertStart triggers a manual convert run (pending/missing files only).
 	ConvertStart(ctx context.Context) error
+	// Reconvert forces reconversion. Mode: "all" deletes existing converted
+	// files and reconverts everything; "failed" retries state=downloaded items.
+	Reconvert(ctx context.Context, mode string) (int, error)
 
 	Items(ctx context.Context, states []string, limit int) ([]store.Item, error)
 }
@@ -65,6 +68,11 @@ type DownloadStartRequest struct {
 type RedownloadRequest struct {
 	Mode string  `json:"mode"`
 	IDs  []int64 `json:"ids,omitempty"`
+}
+
+// ReconvertRequest forces re-conversion. Mode is "all" or "failed".
+type ReconvertRequest struct {
+	Mode string `json:"mode"`
 }
 
 // BlocklistRequest adds/removes blocklist entries.

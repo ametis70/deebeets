@@ -40,6 +40,10 @@ func (f *fakeController) ConvertStart(context.Context) error {
 	f.convertStarted = true
 	return nil
 }
+func (f *fakeController) Reconvert(_ context.Context, mode string) (int, error) {
+	f.lastMode = mode
+	return 3, nil
+}
 func (f *fakeController) Redownload(_ context.Context, mode string, ids []int64) (int, error) {
 	f.lastMode, f.lastIDs = mode, ids
 	return 7, nil
