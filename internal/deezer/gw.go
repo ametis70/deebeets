@@ -6,8 +6,12 @@ import (
 	"fmt"
 )
 
-// getTracksData hydrates full track objects for the given SNG_IDs via
+// GetTracksData hydrates full track objects for the given SNG_IDs via
 // song.getListData.
+func (c *Client) GetTracksData(ctx context.Context, ids []int64) ([]GWTrack, error) {
+	return c.getTracksData(ctx, ids)
+}
+
 func (c *Client) getTracksData(ctx context.Context, ids []int64) ([]GWTrack, error) {
 	if len(ids) == 0 {
 		return nil, nil
@@ -61,6 +65,11 @@ func (c *Client) GetLyrics(ctx context.Context, sngID int64) (*GWLyrics, error) 
 		return nil, fmt.Errorf("getLyrics: %w", err)
 	}
 	return &l, nil
+}
+
+// FavoriteTrackIDs returns the user's loved-track SNG_IDs (paged internally).
+func (c *Client) FavoriteTrackIDs(ctx context.Context) ([]int64, error) {
+	return c.favoriteTrackIDs(ctx)
 }
 
 // favoriteTrackIDs returns the user's loved-track SNG_IDs (paged internally).

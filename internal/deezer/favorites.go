@@ -198,7 +198,172 @@ func (c *Client) enumArtists(ctx context.Context, blocked BlockedFunc, yield fun
 	return nil
 }
 
-// yieldAlbum expands one album into its (non-blocked) tracks.
+// SourceItem describes a top-level favorite source (album, artist, or playlist).
+type SourceItem struct {
+	Kind   string // album|artist|playlist
+	ID     int64
+	Name   string
+	Artist string // album artist name; empty for artists/playlists
+}
+
+// FavoriteSources returns the user's favorited albums, artists, and playlists
+// according to the Selection, without expanding to tracks.
+func (c *Client) FavoriteSources(ctx context.Context, sel Selection, blocked BlockedFunc) ([]SourceItem, error) {
+	if c.UserID() == 0 {
+		if err := c.Login(ctx); err != nil {
+			return nil, err
+		}
+	}
+	var out []SourceItem
+
+	if sel.Albums {
+		rows, err := c.profileTab(ctx, "albums")
+		if err != nil {
+			return nil, fmt.Errorf("albums tab: %w", err)
+		}
+		for _, row := range rows {
+			id := mapID(row, "ALB_ID")
+			if id == 0 {
+				continue
+			}
+			if skip, err := isBlocked(blocked, KindAlbum, id); err != nil {
+				return nil, err
+			} else if skip {
+				continue
+			}
+			out = append(out, SourceItem{
+				Kind:   KindAlbum,
+				ID:     id,
+				Name:   mapStr(row, "ALB_TITLE"),
+				Artist: mapStr(row, "ART_NAME"),
+			})
+		}
+	}
+
+	if sel.Artists {
+		rows, err := c.profileTab(ctx, "artists")
+		if err != nil {
+			return nil, fmt.Errorf("artists tab: %w", err)
+		}
+		for _, row := range rows {
+			id := mapID(row, "ART_ID")
+			if id == 0 {
+				continue
+			}
+			if skip, err := isBlocked(blocked, KindArtist, id); err != nil {
+				return nil, err
+			} else if skip {
+				continue
+			}
+			out = append(out, SourceItem{
+				Kind: KindArtist,
+				ID:   id,
+				Name: mapStr(row, "ART_NAME"),
+			})
+		}
+	}
+
+	if sel.Playlists {
+		rows, err := c.profileTab(ctx, "playlists")
+		if err != nil {
+			return nil, fmt.Errorf("playlists tab: %w", err)
+		}
+		for _, row := range rows {
+			id := mapID(row, "PLAYLIST_ID")
+			if id == 0 {
+				continue
+			}
+			if skip, err := isBlocked(blocked, KindPlaylist, id); err != nil {
+				return nil, err
+			} else if skip {
+				continue
+			}
+			out = append(out, SourceItem{
+				Kind: KindPlaylist,
+				ID:   id,
+				Name: mapStr(row, "TITLE"),
+			})
+		}
+	}
+
+	return out, nil
+}
+
+func mapStr(row map[string]any, key string) string {
+	if v, ok := row[key]; ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+
+// TracksForSource expands a SourceItem into its constituent FavItems.
+// For artists, it expands all albums in the discography.
+func (c *Client) TracksForSource(ctx context.Context, src SourceItem, blocked BlockedFunc) ([]FavItem, error) {
+	sid := fmt.Sprintf("%d", src.ID)
+	switch src.Kind {
+	case KindAlbum:
+		tracks, err := c.albumTracks(ctx, src.ID)
+		if err != nil {
+			return nil, err
+		}
+		return filteredFavs(tracks, blocked, src.Kind, sid)
+
+	case KindArtist:
+		albIDs, err := c.artistAlbumIDs(ctx, src.ID)
+		if err != nil {
+			return nil, err
+		}
+		var out []FavItem
+		for _, albID := range albIDs {
+			if skip, err := isBlocked(blocked, KindAlbum, albID); err != nil {
+				return nil, err
+			} else if skip {
+				continue
+			}
+			tracks, err := c.albumTracks(ctx, albID)
+			if err != nil {
+				return nil, err
+			}
+			favs, err := filteredFavs(tracks, blocked, src.Kind, sid)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, favs...)
+		}
+		return out, nil
+
+	case KindPlaylist:
+		tracks, err := c.playlistTracks(ctx, src.ID)
+		if err != nil {
+			return nil, err
+		}
+		return filteredFavs(tracks, blocked, src.Kind, sid)
+
+	default:
+		return nil, fmt.Errorf("unknown source kind %q", src.Kind)
+	}
+}
+
+func filteredFavs(tracks []GWTrack, blocked BlockedFunc, sourceType, sourceID string) ([]FavItem, error) {
+	var out []FavItem
+	for j := range tracks {
+		t := &tracks[j]
+		if t.SngID == "" {
+			continue
+		}
+		if skip, err := isBlockedTrack(blocked, t.ID()); err != nil {
+			return nil, err
+		} else if skip {
+			continue
+		}
+		out = append(out, trackToFav(t, sourceType, sourceID))
+	}
+	return out, nil
+}
+
 func (c *Client) yieldAlbum(ctx context.Context, albID int64, blocked BlockedFunc, sourceType string, sourceID int64, yield func(FavItem) error) error {
 	tracks, err := c.albumTracks(ctx, albID)
 	if err != nil {

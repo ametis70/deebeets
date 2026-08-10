@@ -91,6 +91,7 @@ func (t *GWTrack) MainArtistPicture() string {
 type GWAlbum struct {
 	AlbID               string `json:"ALB_ID"`
 	AlbTitle            string `json:"ALB_TITLE"`
+	ArtName             string `json:"ART_NAME"`
 	LabelName           string `json:"LABEL_NAME"`
 	NumberTrack         string `json:"NUMBER_TRACK"`
 	NumberDisk          string `json:"NUMBER_DISK"`
