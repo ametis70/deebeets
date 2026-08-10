@@ -19,20 +19,19 @@ func syncCmd() *cobra.Command {
 }
 
 func syncStartCmd() *cobra.Command {
-	var albums, artists, playlists, tracks bool
+	var albums, artists, playlists, tracks, refresh bool
 	c := &cobra.Command{
 		Use:   "start",
 		Short: "Trigger an immediate favorites sync",
-		Long: "Pulls the selected favorite types and enqueues them. With no flags " +
-			"the configured default favorite types are used. Cannot run while a " +
-			"download or import is active.",
+		Long: "Pulls the selected favorite types and caches full track metadata. " +
+			"Use --refresh to re-fetch metadata for already-known tracks.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := requireClient()
 			if err != nil {
 				return err
 			}
 			sel := control.Selection{Albums: albums, Artists: artists, Playlists: playlists, Tracks: tracks}
-			if err := client.SyncStart(ctx(), sel); err != nil {
+			if err := client.SyncStart(ctx(), sel, refresh); err != nil {
 				return err
 			}
 			fmt.Println("sync started")
@@ -43,6 +42,7 @@ func syncStartCmd() *cobra.Command {
 	c.Flags().BoolVar(&artists, "artists", false, "sync favorite artists")
 	c.Flags().BoolVar(&playlists, "playlists", false, "sync favorite playlists")
 	c.Flags().BoolVar(&tracks, "tracks", false, "sync loved tracks")
+	c.Flags().BoolVar(&refresh, "refresh", false, "re-fetch metadata for all existing items")
 	return c
 }
 
