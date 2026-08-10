@@ -20,14 +20,15 @@ import (
 
 // Config is the fully-resolved application configuration.
 type Config struct {
-	Deezer    Deezer    `koanf:"deezer"`
-	Paths     Paths     `koanf:"paths"`
-	Sync      Sync      `koanf:"sync"`
-	Download  Download  `koanf:"download"`
-	Convert   Convert   `koanf:"convert"`
-	RateLimit RateLimit `koanf:"ratelimit"`
-	Tags      Tags      `koanf:"tags"`
-	PostHooks []string  `koanf:"posthooks"`
+	Deezer        Deezer        `koanf:"deezer"`
+	Paths         Paths         `koanf:"paths"`
+	Sync          Sync          `koanf:"sync"`
+	Download      Download      `koanf:"download"`
+	Convert       Convert       `koanf:"convert"`
+	Notifications Notifications `koanf:"notifications"`
+	RateLimit     RateLimit     `koanf:"ratelimit"`
+	Tags          Tags          `koanf:"tags"`
+	PostHooks     []string      `koanf:"posthooks"`
 
 	// FixtureAlbums is populated from DEEZNT_FIXTURE_ALBUMS (comma-separated
 	// album IDs). When set the daemon's sync uses this list instead of fetching
@@ -98,6 +99,23 @@ type Convert struct {
 	FFmpegArgs string `koanf:"ffmpeg_args"`
 }
 
+// Notifications controls webhook notifications for pipeline events.
+type Notifications struct {
+	// WebhookURL is the endpoint to POST events to. Empty disables notifications.
+	WebhookURL string `koanf:"webhook_url"`
+	// On controls which events trigger a notification.
+	On NotificationEvents `koanf:"on"`
+}
+
+// NotificationEvents selects which pipeline events fire a webhook.
+type NotificationEvents struct {
+	DownloadsStarted  bool `koanf:"downloads_started"`
+	DownloadsFinished bool `koanf:"downloads_finished"`
+	DownloadsFailed   bool `koanf:"downloads_failed"`
+	ConvertsFinished  bool `koanf:"converts_finished"`
+	ConvertsFailed    bool `koanf:"converts_failed"`
+}
+
 // RateLimit controls how the downloader backs off to avoid a ban.
 type RateLimit struct {
 	// Cooldown is the base backoff after a rate-limit hit (grows exponentially).
@@ -151,6 +169,13 @@ func Defaults() map[string]any {
 		"convert.concurrency": 2,
 		"convert.format":      "opus",
 		"convert.ffmpeg_args": "ffmpeg -i $source -y -vn -c:a libopus -b:a 160k -vbr on -compression_level 10 $dest",
+
+		"notifications.webhook_url":           "",
+		"notifications.on.downloads_started":  false,
+		"notifications.on.downloads_finished": true,
+		"notifications.on.downloads_failed":   true,
+		"notifications.on.converts_finished":  false,
+		"notifications.on.converts_failed":    true,
 
 		"ratelimit.cooldown": "30s",
 		"ratelimit.max_hits": 5,

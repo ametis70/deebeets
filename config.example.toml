@@ -84,3 +84,15 @@ naming_template = "{{.AlbumArtist}}/{{.Album}}{{if .Year}} ({{.Year}}){{end}}/{{
 
 # Commands run after a successful convert run. Each string is run via the shell.
 posthooks = []
+
+[notifications]
+# Webhook URL to POST events to. Leave empty to disable.
+webhook_url = ""
+
+# Select which events trigger a notification.
+[notifications.on]
+downloads_started  = false
+downloads_finished = true
+downloads_failed   = true
+converts_finished  = false
+converts_failed    = true

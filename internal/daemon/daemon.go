@@ -15,6 +15,7 @@ import (
 	"deeznt/internal/credentials"
 	"deeznt/internal/deezer"
 	"deeznt/internal/downloader"
+	"deeznt/internal/notify"
 	"deeznt/internal/store"
 )
 
@@ -34,12 +35,13 @@ const metaLastSync = "last_sync"
 
 // Daemon owns the pipeline and control server for the process lifetime.
 type Daemon struct {
-	cfg  *config.Config
-	log  *slog.Logger
-	store *store.Store
-	dz   *deezer.Client      // nil until connectDeezer succeeds
-	pipe *downloader.Pipeline // nil until connectDeezer succeeds
-	srv  *control.Server
+	cfg      *config.Config
+	log      *slog.Logger
+	store    *store.Store
+	dz       *deezer.Client      // nil until connectDeezer succeeds
+	pipe     *downloader.Pipeline // nil until connectDeezer succeeds
+	notifier *notify.Notifier
+	srv      *control.Server
 
 	orchCh   chan orchCmd
 	stopDLCh chan struct{} // closed to signal download abort
@@ -58,6 +60,7 @@ func New(cfg *config.Config, log *slog.Logger) (*Daemon, error) {
 		cfg:      cfg,
 		log:      log,
 		store:    st,
+		notifier: notify.New(cfg.Notifications, log),
 		orchCh:   make(chan orchCmd, 4),
 		stopDLCh: make(chan struct{}),
 	}
@@ -299,9 +302,27 @@ func (d *Daemon) runDownload(ctx context.Context) {
 		}
 	}()
 
-	if err := d.pipe.RunDownloads(dlCtx); err != nil && dlCtx.Err() == nil {
+	// Notify: downloads starting.
+	d.notifier.Send(notify.EventDownloadsStarted, nil)
+
+	res, err := d.pipe.RunDownloads(dlCtx)
+	if err != nil && dlCtx.Err() == nil {
 		d.log.Error("download run error", "err", err)
 	}
+
+	// Notify: downloads finished / failed.
+	if res.Downloaded > 0 || res.Failed == 0 {
+		d.notifier.Send(notify.EventDownloadsFinished, map[string]any{
+			"downloaded": res.Downloaded,
+			"failed":     res.Failed,
+		})
+	}
+	if res.Failed > 0 {
+		d.notifier.Send(notify.EventDownloadsFailed, map[string]any{
+			"failed": res.Failed,
+		})
+	}
+
 	_ = d.store.SetMeta(ctx, metaCurrentStage, store.StageIdle)
 }
 
@@ -310,9 +331,21 @@ func (d *Daemon) runConvert(ctx context.Context) {
 	if d.pipe == nil || !d.cfg.Convert.Enabled {
 		return
 	}
-	_ = d.store.SetMeta(ctx, metaCurrentStage, store.StageImporting) // reuse stage key
-	if err := d.pipe.RunConvert(ctx); err != nil {
+	_ = d.store.SetMeta(ctx, metaCurrentStage, store.StageImporting)
+	res, err := d.pipe.RunConvert(ctx)
+	if err != nil {
 		d.log.Error("convert run error", "err", err)
+	}
+	if res.Converted > 0 {
+		d.notifier.Send(notify.EventConvertsFinished, map[string]any{
+			"converted": res.Converted,
+			"failed":    res.Failed,
+		})
+	}
+	if res.Failed > 0 {
+		d.notifier.Send(notify.EventConvertsFailed, map[string]any{
+			"failed": res.Failed,
+		})
 	}
 	_ = d.store.SetMeta(ctx, metaCurrentStage, store.StageIdle)
 }

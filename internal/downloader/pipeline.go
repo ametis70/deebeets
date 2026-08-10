@@ -62,30 +62,37 @@ func New(st *store.Store, dz *deezer.Client, cfg *config.Config, log *slog.Logge
 	}
 }
 
+// DownloadResult summarises a completed download run.
+type DownloadResult struct {
+	Downloaded int // tracks successfully downloaded
+	Failed     int // tracks permanently failed
+}
+
 // RunDownloads drains the download queue in batches with batch-level retries.
 // It runs to completion (or until ctx is cancelled) and returns when the queue
 // is empty and all retry passes are exhausted.
-func (p *Pipeline) RunDownloads(ctx context.Context) error {
+func (p *Pipeline) RunDownloads(ctx context.Context) (DownloadResult, error) {
+	var res DownloadResult
 	// Wait out any persisted rate-limit backoff before starting.
 	if err := p.waitRateLimit(ctx); err != nil {
-		return err
+		return res, err
 	}
 
 	batchPass := 0
 	for {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return res, ctx.Err()
 		}
 
 		// Check the in-memory rate gate (hard stop or cooldown).
 		if wait, hard := p.gate.blockedFor(); hard {
 			p.log.Warn("rate limit hard stop: aborting download run")
-			return nil
+			return res, nil
 		} else if wait > 0 {
 			p.log.Info("rate limited: waiting", "duration", wait)
 			p.persistRateLimitUntil(ctx, time.Now().Add(wait))
 			if !sleepCtx(ctx, wait) {
-				return ctx.Err()
+				return res, ctx.Err()
 			}
 			p.persistRateLimitUntil(ctx, time.Time{})
 			continue
@@ -96,10 +103,10 @@ func (p *Pipeline) RunDownloads(ctx context.Context) error {
 			// Queue empty — attempt batch retry pass if eligible.
 			failed, err := p.store.ClaimFailedBatch(ctx)
 			if err != nil {
-				return err
+				return res, err
 			}
 			if len(failed) == 0 {
-				return nil
+				return res, nil
 			}
 
 			batchPass++
@@ -109,16 +116,17 @@ func (p *Pipeline) RunDownloads(ctx context.Context) error {
 				for _, it := range failed {
 					_ = p.store.MarkFailed(ctx, it.SngID, store.StageDownload, it.Error)
 				}
-				return nil
+				res.Failed += len(ids)
+				return res, nil
 			}
 
 			ids := itemIDs(failed)
 			p.log.Info("requeueing failed batch for retry", "pass", batchPass, "count", len(ids))
 			if err := p.store.RequeueFailedBatch(ctx, ids); err != nil {
-				return err
+				return res, err
 			}
 			if !sleepCtx(ctx, p.cfg.Download.Retry.Backoff) {
-				return ctx.Err()
+				return res, ctx.Err()
 			}
 			continue
 		}
@@ -148,6 +156,7 @@ func (p *Pipeline) RunDownloads(ctx context.Context) error {
 
 		for _, r := range results {
 			if r.err == nil {
+				res.Downloaded++
 				if r.job != nil {
 					convertJobs = append(convertJobs, *r.job)
 				}
@@ -172,10 +181,10 @@ func (p *Pipeline) RunDownloads(ctx context.Context) error {
 		for i, id := range failedIDs {
 			_ = p.store.MarkInFailedBatch(ctx, []int64{id}, store.StageDownload, failedErrs[i])
 		}
+		res.Failed += len(failedIDs)
 
 		// Convert successful downloads in the background so the next download
-		// batch starts immediately. The converter's own concurrency limit
-		// (convert.concurrency) bounds how many ffmpeg processes run at once.
+		// batch starts immediately.
 		if p.conv != nil && len(convertJobs) > 0 {
 			jobs := convertJobs
 			p.convertingCount.Add(int32(len(jobs)))
@@ -194,34 +203,39 @@ func (p *Pipeline) RunDownloads(ctx context.Context) error {
 
 		if d := p.cfg.Download.InterBatchDelay; d > 0 {
 			if !sleepCtx(ctx, d) {
-				return ctx.Err()
+				return res, ctx.Err()
 			}
 		}
 	}
 }
 
+// ConvertResult summarises a completed convert run.
+type ConvertResult struct {
+	Converted int
+	Failed    int
+}
+
 // RunConvert converts files in state=downloaded (pending conversion) plus any
 // finished items that are missing their converted copy. Marks downloaded items
 // as finished after successful conversion. Guards against concurrent runs.
-func (p *Pipeline) RunConvert(ctx context.Context) error {
+func (p *Pipeline) RunConvert(ctx context.Context) (ConvertResult, error) {
+	var res ConvertResult
 	if p.conv == nil {
-		return nil
+		return res, nil
 	}
 	if !p.convertRunning.CompareAndSwap(false, true) {
 		p.log.Warn("convert already running; skipping concurrent trigger")
-		return nil
+		return res, nil
 	}
 	defer p.convertRunning.Store(false)
 
-	// Collect items that need conversion: state=downloaded (not yet converted)
-	// and state=finished where the converted file is missing.
 	downloaded, err := p.store.List(ctx, []string{store.StateDownloaded}, 0)
 	if err != nil {
-		return err
+		return res, err
 	}
 	finished, err := p.store.FinishedItems(ctx)
 	if err != nil {
-		return err
+		return res, err
 	}
 
 	var jobs []converter.ConvertJob
@@ -238,7 +252,6 @@ func (p *Pipeline) RunConvert(ctx context.Context) error {
 			continue
 		}
 		if _, err := os.Stat(outPath); err == nil {
-			// Already converted — if still downloaded, mark finished.
 			if it.State == store.StateDownloaded {
 				_ = p.store.MarkFinished(ctx, it.SngID)
 			}
@@ -249,7 +262,7 @@ func (p *Pipeline) RunConvert(ctx context.Context) error {
 
 	if len(jobs) == 0 {
 		p.log.Info("convert: nothing to do")
-		return nil
+		return res, nil
 	}
 	p.log.Info("starting convert run", "count", len(jobs))
 	converted, failed := p.conv.RunAll(ctx, jobs)
@@ -260,7 +273,9 @@ func (p *Pipeline) RunConvert(ctx context.Context) error {
 		p.log.Warn("conversion failed", "sng_id", id, "err", errMsg)
 		_ = p.store.MarkFailed(ctx, id, store.StageConvert, errMsg)
 	}
-	return nil
+	res.Converted = len(converted)
+	res.Failed = len(failed)
+	return res, nil
 }
 
 // ForceReconvert prepares items for reconversion.
