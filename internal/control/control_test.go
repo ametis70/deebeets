@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"deebeets/internal/store"
+	"deeznt/internal/store"
 )
 
 // fakeController records calls and returns canned data.

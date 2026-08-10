@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"deebeets/internal/control"
-	"deebeets/internal/store"
+	"deeznt/internal/control"
+	"deeznt/internal/store"
 )
 
 // Status implements control.Controller.

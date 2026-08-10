@@ -1,4 +1,4 @@
-// Package cmd implements the deebeets command-line interface.
+// Package cmd implements the deeznt command-line interface.
 package cmd
 
 import (
@@ -10,8 +10,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"deebeets/internal/config"
-	"deebeets/internal/control"
+	"deeznt/internal/config"
+	"deeznt/internal/control"
 )
 
 var (
@@ -32,12 +32,12 @@ func Execute() {
 
 func rootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:           "deebeets",
+		Use:           "deeznt",
 		Short:         "Sync and download your Deezer favorites for Navidrome",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	def := os.Getenv("DEEBEETS_CONFIG")
+	def := os.Getenv("DEEZNT_CONFIG")
 	if def == "" {
 		def = "config.toml"
 	}
@@ -96,7 +96,7 @@ func requireClient() (*control.Client, error) {
 		return nil, err
 	}
 	if !c.Available() {
-		return nil, fmt.Errorf("daemon is not running (start it with `deebeets daemon`)")
+		return nil, fmt.Errorf("daemon is not running (start it with `deeznt daemon`)")
 	}
 	return c, nil
 }

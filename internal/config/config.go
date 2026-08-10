@@ -1,5 +1,5 @@
-// Package config loads deebeets configuration from a TOML file, environment
-// variables (prefixed DEEBEETS_) and built-in defaults, in that increasing
+// Package config loads deeznt configuration from a TOML file, environment
+// variables (prefixed DEEZNT_) and built-in defaults, in that increasing
 // order of precedence.
 package config
 
@@ -29,7 +29,7 @@ type Config struct {
 	Tags      Tags      `koanf:"tags"`
 	PostHooks []string  `koanf:"posthooks"`
 
-	// FixtureAlbums is populated from DEEBEETS_FIXTURE_ALBUMS (comma-separated
+	// FixtureAlbums is populated from DEEZNT_FIXTURE_ALBUMS (comma-separated
 	// album IDs). When set the daemon's sync uses this list instead of fetching
 	// real Deezer favorites, exercising the full pipeline on a fixed set.
 	FixtureAlbums []int64 `koanf:"-"`
@@ -116,9 +116,9 @@ type Tags struct {
 }
 
 const (
-	EnvPrefix        = "DEEBEETS_"
-	EnvARL           = "DEEBEETS_ARL"
-	EnvFixtureAlbums = "DEEBEETS_FIXTURE_ALBUMS"
+	EnvPrefix        = "DEEZNT_"
+	EnvARL           = "DEEZNT_ARL"
+	EnvFixtureAlbums = "DEEZNT_FIXTURE_ALBUMS"
 )
 
 // Defaults returns the built-in configuration.
@@ -128,8 +128,8 @@ func Defaults() map[string]any {
 		"deezer.format_priority": []string{"FLAC", "MP3_320", "MP3_128"},
 
 		"paths.music_dir":   "./music",
-		"paths.db_path":     "./deebeets.db",
-		"paths.socket_path": "./deebeets.sock",
+		"paths.db_path":     "./deeznt.db",
+		"paths.socket_path": "./deeznt.sock",
 
 		"sync.interval":           "0s",
 		"sync.retry.max_attempts": 3,
@@ -188,7 +188,7 @@ func Load(path string) (*Config, error) {
 		}
 	}
 
-	// Environment overrides: DEEBEETS_DOWNLOAD_CONCURRENCY -> download.concurrency.
+	// Environment overrides: DEEZNT_DOWNLOAD_CONCURRENCY -> download.concurrency.
 	err := k.Load(env.Provider(EnvPrefix, ".", func(s string) string {
 		return strings.ReplaceAll(strings.ToLower(strings.TrimPrefix(s, EnvPrefix)), "_", ".")
 	}), nil)

@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"deebeets/internal/store"
+	"deeznt/internal/store"
 )
 
 func verifyCmd() *cobra.Command {
@@ -53,7 +53,7 @@ func verifyCmd() *cobra.Command {
 				fmt.Fprintf(tw, "%d\t%s\t%s\t%s\n", it.SngID, trunc(it.Artist, 24), trunc(it.Title, 32), it.FilePath)
 			}
 			tw.Flush()
-			fmt.Println("\nrun `deebeets redownload --missing` to restore them")
+			fmt.Println("\nrun `deeznt redownload --missing` to restore them")
 			return nil
 		},
 	}

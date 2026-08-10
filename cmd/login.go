@@ -8,9 +8,9 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"deebeets/internal/credentials"
-	"deebeets/internal/deezer"
-	"deebeets/internal/store"
+	"deeznt/internal/credentials"
+	"deeznt/internal/deezer"
+	"deeznt/internal/store"
 )
 
 func loginCmd() *cobra.Command {
@@ -22,7 +22,7 @@ func loginCmd() *cobra.Command {
 putting the secret in the config file.
 
 The ARL is encrypted with XChaCha20-Poly1305 and stored in the SQLite database.
-The encryption key lives in a separate file (.deebeets.key, next to the database),
+The encryption key lives in a separate file (.deeznt.key, next to the database),
 so the database alone cannot be used to recover the ARL.
 
 If ARL is not supplied as an argument, it is read interactively without echo.`,

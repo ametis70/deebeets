@@ -47,8 +47,8 @@ inter_batch_delay = "2s"
 		t.Fatal(err)
 	}
 
-	t.Setenv("DEEBEETS_DOWNLOAD_CONCURRENCY", "9")
-	t.Setenv("DEEBEETS_ARL", "secret-arl")
+	t.Setenv("DEEZNT_DOWNLOAD_CONCURRENCY", "9")
+	t.Setenv("DEEZNT_ARL", "secret-arl")
 
 	cfg, err := Load(path)
 	if err != nil {
@@ -64,7 +64,7 @@ inter_batch_delay = "2s"
 		t.Errorf("env override concurrency = %d, want 9", cfg.Download.Concurrency)
 	}
 	if cfg.Deezer.ARL != "secret-arl" {
-		t.Errorf("DEEBEETS_ARL override = %q", cfg.Deezer.ARL)
+		t.Errorf("DEEZNT_ARL override = %q", cfg.Deezer.ARL)
 	}
 }
 

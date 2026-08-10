@@ -10,12 +10,12 @@ import (
 	"syscall"
 	"time"
 
-	"deebeets/internal/config"
-	"deebeets/internal/control"
-	"deebeets/internal/credentials"
-	"deebeets/internal/deezer"
-	"deebeets/internal/downloader"
-	"deebeets/internal/store"
+	"deeznt/internal/config"
+	"deeznt/internal/control"
+	"deeznt/internal/credentials"
+	"deeznt/internal/deezer"
+	"deeznt/internal/downloader"
+	"deeznt/internal/store"
 )
 
 // orchCmd is a signal sent to the orchestrator loop.
@@ -67,7 +67,7 @@ func New(cfg *config.Config, log *slog.Logger) (*Daemon, error) {
 
 // Run starts the control socket and orchestrator, blocking until shutdown.
 // The daemon starts even with no ARL configured; sync/download will fail until
-// `deebeets login` is run.
+// `deeznt login` is run.
 func (d *Daemon) Run(parent context.Context) error {
 	ctx, cancel := signal.NotifyContext(parent, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -75,7 +75,7 @@ func (d *Daemon) Run(parent context.Context) error {
 
 	// Best-effort: connect to Deezer if credentials are already stored.
 	if err := d.connectDeezer(ctx); err != nil {
-		d.log.Warn("deezer not connected (run `deebeets login`)", "err", err)
+		d.log.Warn("deezer not connected (run `deeznt login`)", "err", err)
 	}
 
 	if n, err := d.store.RecoverInterrupted(ctx); err != nil {
@@ -133,7 +133,7 @@ func (d *Daemon) connectDeezer(ctx context.Context) error {
 		return fmt.Errorf("load credentials: %w", err)
 	}
 	if arl == "" {
-		return fmt.Errorf("no ARL configured — run `deebeets login`")
+		return fmt.Errorf("no ARL configured — run `deeznt login`")
 	}
 	dz, err := deezer.New(arl)
 	if err != nil {

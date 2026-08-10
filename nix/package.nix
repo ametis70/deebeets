@@ -1,7 +1,7 @@
 { pkgs }:
 
 pkgs.buildGoModule {
-  pname = "deebeets";
+  pname = "deeznt";
   version = "0.1.0";
   src = ./..;
 

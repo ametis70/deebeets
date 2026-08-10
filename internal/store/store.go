@@ -1,4 +1,4 @@
-// Package store persists deebeets item state in SQLite. SQLite is the source
+// Package store persists deeznt item state in SQLite. SQLite is the source
 // of truth: rows are never deleted because a file disappeared from disk.
 package store
 

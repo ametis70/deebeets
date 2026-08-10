@@ -13,11 +13,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"deebeets/internal/config"
-	"deebeets/internal/converter"
-	"deebeets/internal/deezer"
-	"deebeets/internal/store"
-	"deebeets/internal/tagger"
+	"deeznt/internal/config"
+	"deeznt/internal/converter"
+	"deeznt/internal/deezer"
+	"deeznt/internal/store"
+	"deeznt/internal/tagger"
 )
 
 // Daemon status meta keys/values.
@@ -57,7 +57,7 @@ func New(st *store.Store, dz *deezer.Client, cfg *config.Config, log *slog.Logge
 		conv:          conv,
 		log:           log,
 		musicDir:      cfg.Paths.MusicDir,
-		incompleteDir: filepath.Join(cfg.Paths.MusicDir, ".deebeets-incomplete"),
+		incompleteDir: filepath.Join(cfg.Paths.MusicDir, ".deeznt-incomplete"),
 		gate:          newRateGate(cfg.RateLimit.Cooldown, cfg.RateLimit.Window, cfg.RateLimit.MaxHits),
 	}
 }

@@ -20,7 +20,7 @@ import (
 	"os"
 	"testing"
 
-	"deebeets/internal/deezer"
+	"deeznt/internal/deezer"
 )
 
 const (
@@ -266,7 +266,7 @@ func TestAPIContributorKeysUnchanged(t *testing.T) {
 		t.Fatal("SNG_CONTRIBUTORS is nil — field may have been renamed in the API")
 	}
 
-	// These are the keys deebeets depends on. If this test fails, update
+	// These are the keys deeznt depends on. If this test fails, update
 	// MainArtists() and FeaturedArtists() in models.go.
 	if _, ok := track.Contributors["main_artist"]; !ok {
 		t.Errorf("key 'main_artist' not found in SNG_CONTRIBUTORS; got keys: %v",

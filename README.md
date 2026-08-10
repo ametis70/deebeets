@@ -1,4 +1,4 @@
-# deebeets
+# deeznt
 
 A headless Go daemon that syncs your **Deezer favorites**, downloads them,
 tags the files for **Navidrome**, and optionally imports them with **beets**.
@@ -8,7 +8,7 @@ never deletes its record, and a correctly-downloaded track is not re-fetched
 just because its file is gone — unless you explicitly force it.
 
 > Personal-use tool for your own Deezer favorites. FLAC requires a Deezer HiFi
-> subscription; deebeets falls back to MP3 automatically.
+> subscription; deeznt falls back to MP3 automatically.
 
 ## Features
 
@@ -27,7 +27,7 @@ just because its file is gone — unless you explicitly force it.
 Requires Go 1.26+.
 
 ```sh
-go build -o deebeets .
+go build -o deeznt .
 ```
 
 ## Configure
@@ -42,53 +42,53 @@ Set your Deezer **ARL** cookie. Prefer the environment variable so the secret
 stays out of the file:
 
 ```sh
-export DEEBEETS_ARL="your-arl-cookie"
+export DEEZNT_ARL="your-arl-cookie"
 ```
 
-Any setting can be overridden via `DEEBEETS_`-prefixed env vars, e.g.
-`DEEBEETS_DOWNLOAD_CONCURRENCY=5`. See `config.example.toml` for all options and
-`deebeets config print` to view the resolved configuration.
+Any setting can be overridden via `DEEZNT_`-prefixed env vars, e.g.
+`DEEZNT_DOWNLOAD_CONCURRENCY=5`. See `config.example.toml` for all options and
+`deeznt config print` to view the resolved configuration.
 
 ## Usage
 
 Run the daemon (owns the pipeline and a Unix control socket):
 
 ```sh
-deebeets daemon
+deeznt daemon
 ```
 
 Everything else is a thin client that talks to the daemon:
 
 ```sh
 # Pull favorites into the queue (does NOT download). No flags = configured defaults.
-deebeets sync --tracks --albums
+deeznt sync --tracks --albums
 
 # Control the download queue (decoupled from sync)
-deebeets start
-deebeets stop
+deeznt start
+deeznt stop
 
 # Inspect
-deebeets status
-deebeets list --state queued,failed
+deeznt status
+deeznt list --state queued,failed
 
 # Download specific ids
-deebeets download 3135556 --type track
-deebeets download 302127  --type album
+deeznt download 3135556 --type track
+deeznt download 302127  --type album
 
 # Blocklist (never downloaded)
-deebeets blocklist add 12345 --type artist --reason "not interested"
-deebeets blocklist list
+deeznt blocklist add 12345 --type artist --reason "not interested"
+deeznt blocklist list
 
 # Force re-download — two distinct modes
-deebeets redownload --missing        # only files gone from disk (restore deletions)
-deebeets redownload --all            # everything, overwriting (quality upgrade/corruption)
-deebeets redownload --all 3135556    # or limit --all to specific ids
+deeznt redownload --missing        # only files gone from disk (restore deletions)
+deeznt redownload --all            # everything, overwriting (quality upgrade/corruption)
+deeznt redownload --all 3135556    # or limit --all to specific ids
 
 # Report finished items whose files are missing (read-only; never deletes)
-deebeets verify
+deeznt verify
 
 # Trigger a beets import on demand
-deebeets beets import --path /music/Artist/Album
+deeznt beets import --path /music/Artist/Album
 ```
 
 `status`, `list` and `verify` read the SQLite database directly, so they work

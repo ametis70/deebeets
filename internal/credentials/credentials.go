@@ -1,7 +1,7 @@
 // Package credentials stores and retrieves the Deezer ARL encrypted at rest.
 //
 // The ARL is encrypted with XChaCha20-Poly1305. The encryption key is derived
-// from the DEEBEETS_SECRET environment variable using HKDF-SHA256. The
+// from the DEEZNT_SECRET environment variable using HKDF-SHA256. The
 // ciphertext (nonce‖ciphertext‖tag) is stored hex-encoded in the meta table
 // under the key "credentials.arl".
 package credentials
@@ -25,7 +25,7 @@ const (
 
 	// EnvSecret is the environment variable that provides the passphrase used
 	// to derive the ARL encryption key.
-	EnvSecret = "DEEBEETS_SECRET"
+	EnvSecret = "DEEZNT_SECRET"
 )
 
 // metaStore is the subset of store.Store used here, avoiding a circular import.
@@ -34,12 +34,12 @@ type metaStore interface {
 	SetMeta(ctx context.Context, key, value string) error
 }
 
-// ErrNoSecret is returned when DEEBEETS_SECRET is not set.
-var ErrNoSecret = errors.New("DEEBEETS_SECRET is not set — set it to encrypt/decrypt the stored ARL")
+// ErrNoSecret is returned when DEEZNT_SECRET is not set.
+var ErrNoSecret = errors.New("DEEZNT_SECRET is not set — set it to encrypt/decrypt the stored ARL")
 
 // deriveKey produces a 32-byte encryption key from secret via HKDF-SHA256.
 func deriveKey(secret string) ([]byte, error) {
-	r := hkdf.New(sha256.New, []byte(secret), nil, []byte("deebeets-arl-encryption-key-v1"))
+	r := hkdf.New(sha256.New, []byte(secret), nil, []byte("deeznt-arl-encryption-key-v1"))
 	key := make([]byte, chacha20poly1305.KeySize)
 	if _, err := io.ReadFull(r, key); err != nil {
 		return nil, fmt.Errorf("credentials: derive key: %w", err)
@@ -47,7 +47,7 @@ func deriveKey(secret string) ([]byte, error) {
 	return key, nil
 }
 
-// keyFromEnv reads DEEBEETS_SECRET and derives the encryption key from it.
+// keyFromEnv reads DEEZNT_SECRET and derives the encryption key from it.
 func keyFromEnv() ([]byte, error) {
 	secret := os.Getenv(EnvSecret)
 	if secret == "" {
@@ -66,7 +66,7 @@ func LoadARL(ctx context.Context, configARL string, st metaStore) (string, error
 	return GetARL(ctx, st)
 }
 
-// SetARL encrypts arl with the key derived from DEEBEETS_SECRET and persists
+// SetARL encrypts arl with the key derived from DEEZNT_SECRET and persists
 // it in the meta table.
 func SetARL(ctx context.Context, st metaStore, arl string) error {
 	key, err := keyFromEnv()
@@ -87,7 +87,7 @@ func SetARL(ctx context.Context, st metaStore, arl string) error {
 }
 
 // GetARL returns the decrypted ARL, or "" if none has been saved yet.
-// Returns ErrNoSecret if DEEBEETS_SECRET is unset but an encrypted ARL exists.
+// Returns ErrNoSecret if DEEZNT_SECRET is unset but an encrypted ARL exists.
 func GetARL(ctx context.Context, st metaStore) (string, error) {
 	encoded, err := st.GetMeta(ctx, metaKeyARL)
 	if err != nil {
@@ -114,7 +114,7 @@ func GetARL(ctx context.Context, st metaStore) (string, error) {
 	}
 	plaintext, err := aead.Open(nil, blob[:nonceSize], blob[nonceSize:], nil)
 	if err != nil {
-		return "", fmt.Errorf("credentials: decrypt failed (wrong DEEBEETS_SECRET?): %w", err)
+		return "", fmt.Errorf("credentials: decrypt failed (wrong DEEZNT_SECRET?): %w", err)
 	}
 	return string(plaintext), nil
 }

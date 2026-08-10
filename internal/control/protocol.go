@@ -5,7 +5,7 @@ package control
 import (
 	"context"
 
-	"deebeets/internal/store"
+	"deeznt/internal/store"
 )
 
 // Controller is the daemon-side behaviour the server exposes.

@@ -44,7 +44,7 @@ type GWArtist struct {
 	RoleID     string `json:"ROLE_ID"` // "0" = main, "5" = featured
 }
 
-// GWTrack is the subset of a gw-light track object deebeets needs. Deezer's
+// GWTrack is the subset of a gw-light track object deeznt needs. Deezer's
 // gateway returns most numeric fields as strings.
 type GWTrack struct {
 	SngID               string              `json:"SNG_ID"`
@@ -87,7 +87,7 @@ func (t *GWTrack) MainArtistPicture() string {
 	return ""
 }
 
-// GWAlbum is the subset of a gw-light album object deebeets needs.
+// GWAlbum is the subset of a gw-light album object deeznt needs.
 type GWAlbum struct {
 	AlbID               string `json:"ALB_ID"`
 	AlbTitle            string `json:"ALB_TITLE"`

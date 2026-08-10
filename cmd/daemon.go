@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"deebeets/internal/daemon"
+	"deeznt/internal/daemon"
 )
 
 func daemonCmd() *cobra.Command {

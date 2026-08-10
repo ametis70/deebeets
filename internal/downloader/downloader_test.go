@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"deebeets/internal/config"
-	"deebeets/internal/store"
+	"deeznt/internal/config"
+	"deeznt/internal/store"
 )
 
 func testPipeline(t *testing.T) (*Pipeline, *store.Store, string) {

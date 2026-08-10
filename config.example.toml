@@ -1,10 +1,10 @@
-# deebeets configuration. Copy to config.toml and edit.
+# deeznt configuration. Copy to config.toml and edit.
 # Every value can also be overridden via env vars, e.g.
-#   DEEBEETS_DOWNLOAD_CONCURRENCY=5
-# Prefer the dedicated DEEBEETS_ARL env var over putting the ARL in this file.
+#   DEEZNT_DOWNLOAD_CONCURRENCY=5
+# Prefer the dedicated DEEZNT_ARL env var over putting the ARL in this file.
 
 [deezer]
-# Your Deezer ARL cookie. Leave empty and export DEEBEETS_ARL instead.
+# Your Deezer ARL cookie. Leave empty and export DEEZNT_ARL instead.
 arl = ""
 # Formats tried in order; first one the account/track can serve wins.
 # FLAC requires a Deezer HiFi subscription.
@@ -12,12 +12,12 @@ format_priority = ["FLAC", "MP3_320", "MP3_128"]
 
 [paths]
 music_dir   = "./music"
-db_path     = "./deebeets.db"
-socket_path = "./deebeets.sock"
+db_path     = "./deeznt.db"
+socket_path = "./deeznt.sock"
 
 [sync]
 # How often the daemon automatically syncs your Deezer favorites.
-# Set to 0 to disable automatic syncing (use `deebeets sync start` manually).
+# Set to 0 to disable automatic syncing (use `deeznt sync start` manually).
 interval = "0s"
 
 [sync.retry]
@@ -33,7 +33,7 @@ inter_batch_delay = "0s"
 auto = false
 
 [download.favorites]
-# Default item types pulled by `deebeets sync start` when no flags are given.
+# Default item types pulled by `deeznt sync start` when no flags are given.
 albums    = false
 artists   = false
 playlists = false
@@ -70,7 +70,7 @@ window   = "5m"
 backoff  = "10m"
 
 [tags]
-# Baseline tags deebeets writes to downloaded files.
+# Baseline tags deeznt writes to downloaded files.
 fields = [
   "title", "artist", "albumartist", "album",
   "tracknumber", "totaltracks", "discnumber", "disctotal",

@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"deebeets/internal/control"
+	"deeznt/internal/control"
 )
 
 // syncCmd returns the `sync` parent command with start/stop subcommands.

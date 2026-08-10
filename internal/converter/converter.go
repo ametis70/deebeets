@@ -12,8 +12,8 @@ import (
 	"strings"
 	"sync"
 
-	"deebeets/internal/config"
-	"deebeets/internal/tagger"
+	"deeznt/internal/config"
+	"deeznt/internal/tagger"
 )
 
 // ConvertJob is one file to convert, with the metadata to write to the output.

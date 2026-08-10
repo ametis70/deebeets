@@ -6,8 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"deebeets/internal/deezer"
-	"deebeets/internal/store"
+	"deeznt/internal/deezer"
+	"deeznt/internal/store"
 )
 
 // SyncResult summarises a sync pass.

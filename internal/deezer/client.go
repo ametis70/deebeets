@@ -16,7 +16,7 @@ import (
 const (
 	gwURL     = "https://www.deezer.com/ajax/gw-light.php"
 	mediaURL  = "https://media.deezer.com/v1/get_url"
-	userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) deebeets"
+	userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) deeznt"
 )
 
 // Client is a logged-in Deezer session. It is safe for concurrent use.

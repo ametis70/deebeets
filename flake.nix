@@ -1,5 +1,5 @@
 {
-  description = "deebeets — Deezer favorites downloader for Navidrome";
+  description = "deeznt — Deezer favorites downloader for Navidrome";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";

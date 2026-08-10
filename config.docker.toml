@@ -1,14 +1,14 @@
-# deebeets config for the Docker Compose E2E stack.
+# deeznt config for the Docker Compose E2E stack.
 # Paths are pinned to the container volume mounts defined in docker-compose.yml.
 
 [deezer]
-arl = ""  # overridden by DEEBEETS_ARL env var at runtime
+arl = ""  # overridden by DEEZNT_ARL env var at runtime
 format_priority = ["FLAC", "MP3_320", "MP3_128"]
 
 [paths]
 music_dir   = "/music/flac"
-db_path     = "/config/deebeets.db"
-socket_path = "/config/deebeets.sock"
+db_path     = "/config/deeznt.db"
+socket_path = "/config/deeznt.sock"
 
 [sync]
 interval = "0s"

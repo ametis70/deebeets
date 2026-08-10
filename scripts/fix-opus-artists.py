@@ -3,11 +3,11 @@
 fix-opus-artists.py — copy multi-value ARTISTS/ALBUMARTISTS tags from the
 source FLAC files in MUSIC_FLAC_DIR to the converted Opus files in MUSIC_OGG_DIR.
 
-Called by deebeets as a post-hook after beets import. Uses mutagen, which is
+Called by deeznt as a post-hook after beets import. Uses mutagen, which is
 already available since beets depends on it.
 
-Environment variables set by deebeets:
-  DEEBEETS_MUSIC_DIR  — the root music directory (e.g. /music/flac)
+Environment variables set by deeznt:
+  DEEZNT_MUSIC_DIR  — the root music directory (e.g. /music/flac)
 
 The script derives the ogg directory by replacing the last path component:
   /music/flac -> /music/ogg
@@ -72,9 +72,9 @@ def fix_file(flac_path: Path, opus_path: Path) -> bool:
     return changed
 
 def main():
-    flac_root_str = os.environ.get("DEEBEETS_MUSIC_DIR", "")
+    flac_root_str = os.environ.get("DEEZNT_MUSIC_DIR", "")
     if not flac_root_str:
-        print("fix-opus-artists: DEEBEETS_MUSIC_DIR not set, skipping", file=sys.stderr)
+        print("fix-opus-artists: DEEZNT_MUSIC_DIR not set, skipping", file=sys.stderr)
         sys.exit(0)
 
     flac_root = Path(flac_root_str)

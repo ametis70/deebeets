@@ -1,22 +1,22 @@
-# E2E stack: deebeets + Navidrome
+# E2E stack: deeznt + Navidrome
 #
 # First-time setup:
 #   docker compose up --build -d
-#   docker compose exec -it deebeets deebeets login
-#   docker compose exec deebeets deebeets sync start
+#   docker compose exec -it deeznt deeznt login
+#   docker compose exec deeznt deeznt sync start
 #
 # Then open http://localhost:4533
 
 services:
-  deebeets:
+  deeznt:
     build: .
     environment:
-      DEEBEETS_SECRET: test
-      DEEBEETS_FIXTURE_ALBUMS: "502723"
+      DEEZNT_SECRET: test
+      DEEZNT_FIXTURE_ALBUMS: "502723"
     command: ["daemon", "--config", "/config/config.docker.toml"]
     volumes:
       - ./config.docker.toml:/config/config.docker.toml:ro
-      - deebeets-state:/config
+      - deeznt-state:/config
       - music:/music
     restart: unless-stopped
 
@@ -34,10 +34,10 @@ services:
       - music:/music:ro
       - navidrome-data:/data
     depends_on:
-      - deebeets
+      - deeznt
     restart: unless-stopped
 
 volumes:
   music:
-  deebeets-state:
+  deeznt-state:
   navidrome-data:

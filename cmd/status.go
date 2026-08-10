@@ -7,8 +7,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"deebeets/internal/control"
-	"deebeets/internal/store"
+	"deeznt/internal/control"
+	"deeznt/internal/store"
 )
 
 // stateOrder is the display order for state counts.

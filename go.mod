@@ -1,4 +1,4 @@
-module deebeets
+module deeznt
 
 go 1.26.0
 

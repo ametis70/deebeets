@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"deebeets/internal/store"
+	"deeznt/internal/store"
 )
 
 // Client talks to the daemon's control socket.

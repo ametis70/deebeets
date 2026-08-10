@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"deebeets/internal/converter"
-	"deebeets/internal/deezer"
-	"deebeets/internal/store"
-	"deebeets/internal/tagger"
+	"deeznt/internal/converter"
+	"deeznt/internal/deezer"
+	"deeznt/internal/store"
+	"deeznt/internal/tagger"
 )
 
 // downloadOne attempts a single download. Returns a ConvertJob (non-nil on

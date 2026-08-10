@@ -1,7 +1,7 @@
 # Deezer GW API Reference
 
 Deezer exposes an internal JSON-RPC-style gateway (`gw-light.php`) used by
-their web player. This document describes every endpoint deebeets calls, the
+their web player. This document describes every endpoint deeznt calls, the
 request/response shapes, and how to verify them manually or via the integration
 test suite.
 
@@ -380,5 +380,5 @@ print(json.dumps(lyrics, indent=2))
 > `urllib.parse.quote` encodes `~` as `%7E` by default, which Deezer rejects.
 > Always pass `safe='~-_.'` to `quote()`. The same applies to any HTTP client
 > that URL-encodes query parameters — ensure `~` is left unencoded.
-> Go's `url.Values.Encode()` has the same issue; deebeets works around this
+> Go's `url.Values.Encode()` has the same issue; deeznt works around this
 > because Go's `net/url` package treats `~` as safe per RFC 3986.
