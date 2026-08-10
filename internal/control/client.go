@@ -87,9 +87,9 @@ func (c *Client) Status(ctx context.Context) (StatusResponse, error) {
 	return out, err
 }
 
-// SyncStart triggers an immediate sync run.
-func (c *Client) SyncStart(ctx context.Context, sel Selection) error {
-	return c.do(ctx, http.MethodPost, "/sync/start", SyncStartRequest{Selection: sel}, nil)
+// SyncStart triggers an immediate sync run. refresh=true re-fetches all cached metadata.
+func (c *Client) SyncStart(ctx context.Context, sel Selection, refresh bool) error {
+	return c.do(ctx, http.MethodPost, "/sync/start", SyncStartRequest{Selection: sel, Refresh: refresh}, nil)
 }
 
 // SyncStop cancels an in-progress sync.
@@ -129,6 +129,23 @@ func (c *Client) BlocklistList(ctx context.Context) ([]store.Block, error) {
 	var out []store.Block
 	err := c.do(ctx, http.MethodGet, "/blocklist", nil, &out)
 	return out, err
+}
+
+// TagStart triggers a manual tag run.
+func (c *Client) TagStart(ctx context.Context) error {
+	return c.do(ctx, http.MethodPost, "/tag/start", nil, nil)
+}
+
+// TagStop aborts the active tag run.
+func (c *Client) TagStop(ctx context.Context) error {
+	return c.do(ctx, http.MethodPost, "/tag/stop", nil, nil)
+}
+
+// Retag requeues items for retagging (mode: "all" or "failed").
+func (c *Client) Retag(ctx context.Context, mode string) (int, error) {
+	var out CountResponse
+	err := c.do(ctx, http.MethodPost, "/retag", RetagRequest{Mode: mode}, &out)
+	return out.Count, err
 }
 
 // ConvertStart triggers a manual convert run.

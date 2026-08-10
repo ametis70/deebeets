@@ -41,11 +41,12 @@ func (d *Daemon) Status(ctx context.Context) (control.StatusResponse, error) {
 }
 
 // SyncStart triggers an immediate sync. Errors if downloads are active.
-func (d *Daemon) SyncStart(ctx context.Context, sel control.Selection) error {
+func (d *Daemon) SyncStart(ctx context.Context, sel control.Selection, refresh bool) error {
 	stage, _ := d.store.GetMeta(ctx, metaCurrentStage)
-	if stage == store.StageDownloading || stage == store.StageImporting {
+	if stage == store.StageDownloading || stage == store.StageImporting || stage == store.StageTagging || stage == store.StageConverting {
 		return fmt.Errorf("cannot start sync while %s is active", stage)
 	}
+	d.syncRefresh = refresh
 	select {
 	case d.orchCh <- orchSync:
 		return nil
@@ -96,6 +97,51 @@ func (d *Daemon) DownloadStop(ctx context.Context) error {
 		close(d.stopDLCh)
 	}
 	return nil
+}
+
+// TagStart triggers a manual tag run.
+func (d *Daemon) TagStart(ctx context.Context) error {
+	select {
+	case d.orchCh <- orchTag:
+		return nil
+	default:
+		return fmt.Errorf("orchestrator busy")
+	}
+}
+
+// TagStop aborts the active tag run.
+func (d *Daemon) TagStop(ctx context.Context) error {
+	select {
+	case <-d.stopTagCh:
+	default:
+		close(d.stopTagCh)
+	}
+	return nil
+}
+
+// Retag requeues items for retagging.
+func (d *Daemon) Retag(ctx context.Context, mode string) (int, error) {
+	if d.pipe == nil {
+		return 0, fmt.Errorf("not logged in")
+	}
+	var n int
+	var err error
+	switch mode {
+	case "all":
+		n, err = d.store.RequeueForRetag(d.ctx)
+	case "failed":
+		n, err = d.store.RequeueAllFailedTags(d.ctx)
+	default:
+		return 0, fmt.Errorf("retag mode must be 'all' or 'failed', got %q", mode)
+	}
+	if err != nil {
+		return 0, err
+	}
+	select {
+	case d.orchCh <- orchTag:
+	default:
+	}
+	return n, nil
 }
 
 // ConvertStart triggers a manual convert run.

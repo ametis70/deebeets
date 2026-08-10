@@ -41,6 +41,9 @@ func (s *Server) Listen() error {
 	mux.HandleFunc("POST /sync/stop", s.handleSyncStop)
 	mux.HandleFunc("POST /download/start", s.handleDownloadStart)
 	mux.HandleFunc("POST /download/stop", s.handleDownloadStop)
+	mux.HandleFunc("POST /tag/start", s.handleTagStart)
+	mux.HandleFunc("POST /tag/stop", s.handleTagStop)
+	mux.HandleFunc("POST /retag", s.handleRetag)
 	mux.HandleFunc("POST /redownload", s.handleRedownload)
 	mux.HandleFunc("GET /blocklist", s.handleBlocklistList)
 	mux.HandleFunc("POST /blocklist", s.handleBlocklistAdd)
@@ -118,7 +121,7 @@ func (s *Server) handleSyncStart(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	if err := s.ctrl.SyncStart(r.Context(), req.Selection); err != nil {
+	if err := s.ctrl.SyncStart(r.Context(), req.Selection, req.Refresh); err != nil {
 		writeErr(w, http.StatusConflict, err)
 		return
 	}
@@ -201,6 +204,36 @@ func (s *Server) handleBlocklistList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, blocks)
+}
+
+func (s *Server) handleTagStart(w http.ResponseWriter, r *http.Request) {
+	if err := s.ctrl.TagStart(r.Context()); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, APIResponse{OK: true, Message: "tag started"})
+}
+
+func (s *Server) handleTagStop(w http.ResponseWriter, r *http.Request) {
+	if err := s.ctrl.TagStop(r.Context()); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, APIResponse{OK: true, Message: "tag stopped"})
+}
+
+func (s *Server) handleRetag(w http.ResponseWriter, r *http.Request) {
+	var req RetagRequest
+	if err := decode(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	n, err := s.ctrl.Retag(r.Context(), req.Mode)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, CountResponse{Count: n})
 }
 
 func (s *Server) handleConvertStart(w http.ResponseWriter, r *http.Request) {

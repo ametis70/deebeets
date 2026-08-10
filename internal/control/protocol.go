@@ -12,8 +12,9 @@ import (
 type Controller interface {
 	Status(ctx context.Context) (StatusResponse, error)
 
-	// Sync triggers an immediate sync run. Errors if downloads are active.
-	SyncStart(ctx context.Context, sel Selection) error
+	// SyncStart triggers an immediate sync run. Errors if downloads are active.
+	// refresh=true re-fetches all cached metadata even for existing items.
+	SyncStart(ctx context.Context, sel Selection, refresh bool) error
 	// SyncStop cancels an in-progress sync. Errors if downloads are active.
 	SyncStop(ctx context.Context) error
 
@@ -21,6 +22,13 @@ type Controller interface {
 	DownloadStart(ctx context.Context, kind string, ids []int64) error
 	// DownloadStop aborts the active download run after the current batch.
 	DownloadStop(ctx context.Context) error
+
+	// TagStart triggers a manual tag run.
+	TagStart(ctx context.Context) error
+	// TagStop aborts the active tag run.
+	TagStop(ctx context.Context) error
+	// Retag requeues items for retagging. Mode: "all" or "failed".
+	Retag(ctx context.Context, mode string) (int, error)
 
 	Redownload(ctx context.Context, mode string, ids []int64) (int, error)
 
@@ -61,6 +69,7 @@ type StatusResponse struct {
 // SyncStartRequest selects favorite types to pull.
 type SyncStartRequest struct {
 	Selection
+	Refresh bool `json:"refresh"`
 }
 
 // DownloadStartRequest enqueues specific ids of a kind (optional).
@@ -77,6 +86,11 @@ type RedownloadRequest struct {
 
 // ReconvertRequest forces re-conversion. Mode is "all" or "failed".
 type ReconvertRequest struct {
+	Mode string `json:"mode"`
+}
+
+// RetagRequest forces retagging. Mode is "all" or "failed".
+type RetagRequest struct {
 	Mode string `json:"mode"`
 }
 

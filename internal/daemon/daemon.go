@@ -25,9 +25,11 @@ type orchCmd int
 const (
 	orchSync     orchCmd = iota // run sync immediately
 	orchDownload                // run download immediately
+	orchTag                     // run tag immediately
 	orchConvert                 // run convert immediately
 	orchStop                    // stop the active download run
 	orchSyncStop                // stop an in-progress sync
+	orchTagStop                 // stop the active tag run
 )
 
 const metaCurrentStage = "current_stage"
@@ -43,10 +45,12 @@ type Daemon struct {
 	notifier *notify.Notifier
 	srv      *control.Server
 
-	orchCh   chan orchCmd
-	stopDLCh chan struct{} // closed to signal download abort
-	ctx      context.Context
-	cancel   context.CancelFunc
+	orchCh      chan orchCmd
+	stopDLCh    chan struct{} // closed to signal download abort
+	stopTagCh   chan struct{} // closed to signal tag abort
+	syncRefresh bool         // set by sync start --refresh
+	ctx         context.Context
+	cancel      context.CancelFunc
 }
 
 // New builds a Daemon from config.
@@ -57,12 +61,13 @@ func New(cfg *config.Config, log *slog.Logger) (*Daemon, error) {
 	}
 
 	d := &Daemon{
-		cfg:      cfg,
-		log:      log,
-		store:    st,
-		notifier: notify.New(cfg.Notifications, log),
-		orchCh:   make(chan orchCmd, 4),
-		stopDLCh: make(chan struct{}),
+		cfg:       cfg,
+		log:       log,
+		store:     st,
+		notifier:  notify.New(cfg.Notifications, log),
+		orchCh:    make(chan orchCmd, 4),
+		stopDLCh:  make(chan struct{}),
+		stopTagCh: make(chan struct{}),
 	}
 	d.srv = control.NewServer(d, cfg.Paths.SocketPath)
 	return d, nil
@@ -160,11 +165,19 @@ func (d *Daemon) orchestrate(ctx context.Context) {
 	case store.StageDownloading:
 		d.log.Info("resuming interrupted download run")
 		d.runDownload(ctx)
+		if d.cfg.Tag.Auto {
+			d.runTag(ctx)
+		}
 		if d.cfg.Convert.Auto {
 			d.runConvert(ctx)
 		}
-	case store.StageImporting:
-		// Legacy stage name from before beets removal — treat as convert.
+	case store.StageTagging:
+		d.log.Info("resuming interrupted tag run")
+		d.runTag(ctx)
+		if d.cfg.Convert.Auto {
+			d.runConvert(ctx)
+		}
+	case store.StageConverting, store.StageImporting:
 		d.log.Info("resuming interrupted convert run")
 		d.runConvert(ctx)
 	}
@@ -208,13 +221,21 @@ func (d *Daemon) handleOrchCmd(ctx context.Context, cmd orchCmd) {
 		d.runSyncThenDownload(ctx)
 	case orchDownload:
 		d.runDownload(ctx)
+		if d.cfg.Tag.Auto {
+			d.runTag(ctx)
+		}
+		if d.cfg.Convert.Auto {
+			d.runConvert(ctx)
+		}
+	case orchTag:
+		d.runTag(ctx)
 		if d.cfg.Convert.Auto {
 			d.runConvert(ctx)
 		}
 	case orchConvert:
 		d.runConvert(ctx)
-	case orchStop, orchSyncStop:
-		// handled via stopDLCh / no-op
+	case orchStop, orchSyncStop, orchTagStop:
+		// handled via stop channels / no-op
 	}
 }
 
@@ -226,6 +247,9 @@ func (d *Daemon) runSyncThenDownload(ctx context.Context) {
 		return
 	}
 	d.runDownload(ctx)
+	if d.cfg.Tag.Auto {
+		d.runTag(ctx)
+	}
 	if d.cfg.Convert.Auto {
 		d.runConvert(ctx)
 	}
@@ -255,7 +279,7 @@ func (d *Daemon) runSync(ctx context.Context) bool {
 			res.New, res.Total = n, n
 			err = ferr
 		} else {
-			res, err = d.pipe.Sync(ctx, sel)
+			res, err = d.pipe.Sync(ctx, sel, d.syncRefresh)
 		}
 
 		if err == nil {
@@ -330,7 +354,35 @@ func (d *Daemon) runDownload(ctx context.Context) {
 	_ = d.store.SetMeta(ctx, metaCurrentStage, store.StageIdle)
 }
 
-// runConvert runs a full convert pass over downloaded files.
+// runTag runs the tag stage to completion.
+func (d *Daemon) runTag(ctx context.Context) {
+	if d.pipe == nil {
+		return
+	}
+	_ = d.store.SetMeta(ctx, metaCurrentStage, store.StageTagging)
+
+	tagCtx, tagCancel := context.WithCancel(ctx)
+	defer tagCancel()
+
+	stopCh := make(chan struct{})
+	d.stopTagCh = stopCh
+	go func() {
+		select {
+		case <-stopCh:
+			tagCancel()
+		case <-tagCtx.Done():
+		}
+	}()
+
+	res, err := d.pipe.RunTag(tagCtx)
+	if err != nil && tagCtx.Err() == nil {
+		d.log.Error("tag run error", "err", err)
+	}
+	d.log.Info("tag run complete", "tagged", res.Tagged, "failed", res.Failed)
+	_ = d.store.SetMeta(ctx, metaCurrentStage, store.StageIdle)
+}
+
+// runConvert runs a full convert pass over tagged files.
 func (d *Daemon) runConvert(ctx context.Context) {
 	if d.pipe == nil || !d.cfg.Convert.Enabled {
 		return

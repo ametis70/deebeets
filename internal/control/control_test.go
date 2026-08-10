@@ -26,7 +26,7 @@ type fakeController struct {
 func (f *fakeController) Status(context.Context) (StatusResponse, error) {
 	return StatusResponse{Stage: "idle", Counts: map[string]int{"finished": 3, "queued": 2}}, nil
 }
-func (f *fakeController) SyncStart(_ context.Context, sel Selection) error {
+func (f *fakeController) SyncStart(_ context.Context, sel Selection, refresh bool) error {
 	f.syncStarted, f.syncSel = true, sel
 	return nil
 }
@@ -36,10 +36,13 @@ func (f *fakeController) DownloadStart(_ context.Context, kind string, ids []int
 	return nil
 }
 func (f *fakeController) DownloadStop(context.Context) error { f.dlStopped = true; return nil }
-func (f *fakeController) ConvertStart(context.Context) error {
-	f.convertStarted = true
-	return nil
+func (f *fakeController) TagStart(context.Context) error     { return nil }
+func (f *fakeController) TagStop(context.Context) error      { return nil }
+func (f *fakeController) Retag(_ context.Context, mode string) (int, error) {
+	f.lastMode = mode
+	return 3, nil
 }
+func (f *fakeController) ConvertStart(context.Context) error { f.convertStarted = true; return nil }
 func (f *fakeController) Reconvert(_ context.Context, mode string) (int, error) {
 	f.lastMode = mode
 	return 3, nil
@@ -55,7 +58,7 @@ func (f *fakeController) BlocklistAdd(_ context.Context, kind string, ids []int6
 func (f *fakeController) BlocklistRemove(context.Context, string, []int64) error { return nil }
 func (f *fakeController) BlocklistList(context.Context) ([]store.Block, error)   { return f.blocked, nil }
 func (f *fakeController) Items(context.Context, []string, int) ([]store.Item, error) {
-	return []store.Item{{SngID: 1, State: "finished", Title: "T"}}, nil
+	return []store.Item{{SngID: 1, State: "converted", Title: "T"}}, nil
 }
 func (f *fakeController) Sources(context.Context, []string) ([]store.Source, error) {
 	return []store.Source{{Kind: "album", ExtID: 502723, Name: "Plastic Beach", Artist: "Gorillaz", State: "synced", TrackCount: 16}}, nil
@@ -91,7 +94,7 @@ func TestControlRoundTrip(t *testing.T) {
 		t.Fatalf("status = %+v err=%v", st, err)
 	}
 
-	if err := c.SyncStart(ctx, Selection{Tracks: true}); err != nil {
+	if err := c.SyncStart(ctx, Selection{Tracks: true}, false); err != nil {
 		t.Fatalf("sync start err=%v", err)
 	}
 	if !fc.syncStarted || !fc.syncSel.Tracks {
@@ -139,7 +142,7 @@ func TestControlRoundTrip(t *testing.T) {
 		t.Fatalf("blocklist = %+v err=%v", blocks, err)
 	}
 
-	items, err := c.Items(ctx, []string{"finished"})
+	items, err := c.Items(ctx, []string{"converted"})
 	if err != nil || len(items) != 1 || items[0].SngID != 1 {
 		t.Fatalf("items = %+v err=%v", items, err)
 	}
