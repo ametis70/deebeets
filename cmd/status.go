@@ -55,10 +55,12 @@ func statusCmd() *cobra.Command {
 				stage = store.StageIdle
 			}
 			fmt.Println("daemon: not running (showing database snapshot)")
+			failedByStage, _ := s.CountFailedByStage(ctx())
 			printStatus(control.StatusResponse{
-				Stage:    stage,
-				Counts:   counts,
-				LastSync: last,
+				Stage:         stage,
+				Counts:        counts,
+				FailedByStage: failedByStage,
+				LastSync:      last,
 			})
 			return nil
 		},
@@ -104,6 +106,15 @@ func printStatus(st control.StatusResponse) {
 			}
 			fmt.Fprintf(tw, "  %s\t%d\n", label, n)
 			seen[s] = true
+			// Break down failed by stage inline.
+			if s == store.StateFailed && len(st.FailedByStage) > 0 {
+				if n := st.FailedByStage[store.StageDownload]; n > 0 {
+					fmt.Fprintf(tw, "    failed to download\t%d\n", n)
+				}
+				if n := st.FailedByStage[store.StageConvert]; n > 0 {
+					fmt.Fprintf(tw, "    failed to convert\t%d\n", n)
+				}
+			}
 		}
 	}
 	var extra []string

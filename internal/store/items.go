@@ -163,6 +163,26 @@ func (s *Store) CountByState(ctx context.Context) (map[string]int, error) {
 	return out, rows.Err()
 }
 
+// CountFailedByStage returns the number of failed items per stage (download|convert).
+func (s *Store) CountFailedByStage(ctx context.Context) (map[string]int, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT stage, COUNT(*) FROM items WHERE state = 'failed' GROUP BY stage`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var stage string
+		var n int
+		if err := rows.Scan(&stage, &n); err != nil {
+			return nil, err
+		}
+		out[stage] = n
+	}
+	return out, rows.Err()
+}
+
 // ClaimDownload atomically claims the oldest pending track for downloading,
 // incrementing its attempt counter. Returns (nil, false, nil) when the queue
 // is empty.

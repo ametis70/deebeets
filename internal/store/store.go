@@ -31,6 +31,7 @@ const (
 // Failure stages.
 const (
 	StageDownload = "download"
+	StageConvert  = "convert"
 )
 
 // Orchestrator stages persisted to meta.

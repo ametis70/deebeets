@@ -187,6 +187,7 @@ func (p *Pipeline) RunDownloads(ctx context.Context) error {
 				}
 				for id, errMsg := range failed {
 					p.log.Warn("conversion failed", "sng_id", id, "err", errMsg)
+					_ = p.store.MarkFailed(ctx, id, store.StageConvert, errMsg)
 				}
 			}()
 		}
@@ -257,6 +258,7 @@ func (p *Pipeline) RunConvert(ctx context.Context) error {
 	}
 	for id, errMsg := range failed {
 		p.log.Warn("conversion failed", "sng_id", id, "err", errMsg)
+		_ = p.store.MarkFailed(ctx, id, store.StageConvert, errMsg)
 	}
 	return nil
 }

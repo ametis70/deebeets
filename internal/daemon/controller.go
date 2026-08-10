@@ -25,6 +25,8 @@ func (d *Daemon) Status(ctx context.Context) (control.StatusResponse, error) {
 		convertingCount = d.pipe.ConvertingCount()
 	}
 
+	failedByStage, _ := d.store.CountFailedByStage(ctx)
+
 	return control.StatusResponse{
 		Stage:           stage,
 		Syncing:         stage == store.StageSyncing,
@@ -32,6 +34,7 @@ func (d *Daemon) Status(ctx context.Context) (control.StatusResponse, error) {
 		Converting:      convertingCount > 0 || stage == store.StageImporting,
 		ConvertingCount: convertingCount,
 		Counts:          counts,
+		FailedByStage:   failedByStage,
 		LastSync:        lastSync,
 	}, nil
 }
