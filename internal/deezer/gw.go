@@ -27,6 +27,47 @@ func (c *Client) getTracksData(ctx context.Context, ids []int64) ([]GWTrack, err
 	return ld.Data, nil
 }
 
+// GetTrackWithRaw fetches a single track and returns both the parsed struct
+// and the raw JSON response (for caching in the DB).
+func (c *Client) GetTrackWithRaw(ctx context.Context, sngID int64) (*GWTrack, string, error) {
+	results, err := c.apiCall(ctx, "song.getData", map[string]any{"SNG_ID": sngID})
+	if err != nil {
+		return nil, "", err
+	}
+	var t GWTrack
+	if err := json.Unmarshal(results, &t); err != nil {
+		return nil, "", fmt.Errorf("getData: %w", err)
+	}
+	return &t, string(results), nil
+}
+
+// GetTrackRaw fetches song.getData and returns only the raw JSON.
+func (c *Client) GetTrackRaw(ctx context.Context, sngID int64) (string, error) {
+	results, err := c.apiCall(ctx, "song.getData", map[string]any{"SNG_ID": sngID})
+	if err != nil {
+		return "", err
+	}
+	return string(results), nil
+}
+
+// GetAlbumRaw fetches album.getData and returns only the raw JSON.
+func (c *Client) GetAlbumRaw(ctx context.Context, albID int64) (string, error) {
+	results, err := c.apiCall(ctx, "album.getData", map[string]any{"ALB_ID": albID})
+	if err != nil {
+		return "", err
+	}
+	return string(results), nil
+}
+
+// GetLyricsRaw fetches song.getLyrics and returns only the raw JSON.
+func (c *Client) GetLyricsRaw(ctx context.Context, sngID int64) (string, error) {
+	results, err := c.apiCall(ctx, "song.getLyrics", map[string]any{"SNG_ID": sngID})
+	if err != nil {
+		return "", err
+	}
+	return string(results), nil
+}
+
 // GetTrack fetches a single track's full data via song.getData.
 func (c *Client) GetTrack(ctx context.Context, sngID int64) (*GWTrack, error) {
 	results, err := c.apiCall(ctx, "song.getData", map[string]any{"SNG_ID": sngID})
