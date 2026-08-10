@@ -121,11 +121,16 @@ func (p *Pipeline) attemptDownload(ctx context.Context, item *store.Item) (*conv
 	p.log.Info("downloaded", "sng_id", item.SngID, "title", item.Title,
 		"format", resolved.Format, "path", rel)
 
-	// Return a convert job if conversion is enabled.
-	if p.conv != nil {
-		return &converter.ConvertJob{SourcePath: finalPath, Metadata: md}, nil
+	// If conversion is disabled, go straight to finished.
+	if p.conv == nil {
+		if err := p.store.MarkFinished(ctx, item.SngID); err != nil {
+			return nil, err
+		}
+		return nil, nil
 	}
-	return nil, nil
+
+	// Return a convert job so the pipeline can convert and then mark finished.
+	return &converter.ConvertJob{SngID: item.SngID, SourcePath: finalPath, Metadata: md}, nil
 }
 
 // streamToTemp downloads and decrypts a track into a temp file.

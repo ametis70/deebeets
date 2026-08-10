@@ -18,6 +18,7 @@ import (
 
 // ConvertJob is one file to convert, with the metadata to write to the output.
 type ConvertJob struct {
+	SngID      int64
 	SourcePath string
 	Metadata   tagger.Metadata
 }
@@ -43,16 +44,18 @@ func (r *Runner) DestDir() string {
 }
 
 // RunAll converts all jobs concurrently (up to cfg.Concurrency).
-func (r *Runner) RunAll(ctx context.Context, jobs []ConvertJob) error {
+// Returns the SngIDs of successfully converted files and a map of
+// failed SngID → error message.
+func (r *Runner) RunAll(ctx context.Context, jobs []ConvertJob) (converted []int64, failed map[int64]string) {
 	if len(jobs) == 0 {
-		return nil
+		return nil, nil
 	}
+	failed = make(map[int64]string)
 
 	sem := make(chan struct{}, r.cfg.Concurrency)
 	var (
-		mu   sync.Mutex
-		errs []string
-		wg   sync.WaitGroup
+		mu sync.Mutex
+		wg sync.WaitGroup
 	)
 
 	for _, j := range jobs {
@@ -65,19 +68,18 @@ func (r *Runner) RunAll(ctx context.Context, jobs []ConvertJob) error {
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			if err := r.convertOne(ctx, j); err != nil {
-				mu.Lock()
-				errs = append(errs, err.Error())
-				mu.Unlock()
+			err := r.convertOne(ctx, j)
+			mu.Lock()
+			if err != nil {
+				failed[j.SngID] = err.Error()
+			} else {
+				converted = append(converted, j.SngID)
 			}
+			mu.Unlock()
 		}()
 	}
 	wg.Wait()
-
-	if len(errs) > 0 {
-		return fmt.Errorf("%d conversion(s) failed: %s", len(errs), strings.Join(errs, "; "))
-	}
-	return nil
+	return converted, failed
 }
 
 // convertOne converts and tags a single file.

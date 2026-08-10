@@ -171,10 +171,17 @@ func (p *Pipeline) RunDownloads(ctx context.Context) error {
 			_ = p.store.MarkInFailedBatch(ctx, []int64{id}, store.StageDownload, failedErrs[i])
 		}
 
-		// Convert successful downloads immediately if converter is enabled.
+		// Convert successful downloads immediately if converter is enabled,
+		// then mark items finished. If converter is disabled, items were
+		// already marked finished inside downloadOne.
 		if p.conv != nil && len(convertJobs) > 0 {
-			if err := p.conv.RunAll(ctx, convertJobs); err != nil {
-				p.log.Error("batch conversion errors", "err", err)
+			converted, failed := p.conv.RunAll(ctx, convertJobs)
+			for _, id := range converted {
+				_ = p.store.MarkFinished(ctx, id)
+			}
+			for id, errMsg := range failed {
+				p.log.Warn("conversion failed", "sng_id", id, "err", errMsg)
+				// Leave as state=downloaded so it can be retried manually.
 			}
 		}
 
@@ -186,9 +193,9 @@ func (p *Pipeline) RunDownloads(ctx context.Context) error {
 	}
 }
 
-// RunConvert converts all downloaded files that don't yet have a converted copy.
-// Used for manual `deebeets convert start` and on-demand re-conversion.
-// Guards against concurrent runs.
+// RunConvert converts files in state=downloaded (pending conversion) plus any
+// finished items that are missing their converted copy. Marks downloaded items
+// as finished after successful conversion. Guards against concurrent runs.
 func (p *Pipeline) RunConvert(ctx context.Context) error {
 	if p.conv == nil {
 		return nil
@@ -199,13 +206,19 @@ func (p *Pipeline) RunConvert(ctx context.Context) error {
 	}
 	defer p.convertRunning.Store(false)
 
-	items, err := p.store.FinishedItems(ctx)
+	// Collect items that need conversion: state=downloaded (not yet converted)
+	// and state=finished where the converted file is missing.
+	downloaded, err := p.store.List(ctx, []string{store.StateDownloaded}, 0)
+	if err != nil {
+		return err
+	}
+	finished, err := p.store.FinishedItems(ctx)
 	if err != nil {
 		return err
 	}
 
 	var jobs []converter.ConvertJob
-	for _, it := range items {
+	for _, it := range append(downloaded, finished...) {
 		if it.FilePath == "" {
 			continue
 		}
@@ -213,15 +226,18 @@ func (p *Pipeline) RunConvert(ctx context.Context) error {
 		if _, err := os.Stat(srcPath); err != nil {
 			continue
 		}
-		// Check if converted file already exists.
 		outPath, err := p.conv.OutputPath(srcPath)
 		if err != nil || outPath == "" {
 			continue
 		}
 		if _, err := os.Stat(outPath); err == nil {
-			continue // already converted
+			// Already converted — if still downloaded, mark finished.
+			if it.State == store.StateDownloaded {
+				_ = p.store.MarkFinished(ctx, it.SngID)
+			}
+			continue
 		}
-		jobs = append(jobs, converter.ConvertJob{SourcePath: srcPath})
+		jobs = append(jobs, converter.ConvertJob{SngID: it.SngID, SourcePath: srcPath})
 	}
 
 	if len(jobs) == 0 {
@@ -229,7 +245,14 @@ func (p *Pipeline) RunConvert(ctx context.Context) error {
 		return nil
 	}
 	p.log.Info("starting convert run", "count", len(jobs))
-	return p.conv.RunAll(ctx, jobs)
+	converted, failed := p.conv.RunAll(ctx, jobs)
+	for _, id := range converted {
+		_ = p.store.MarkFinished(ctx, id)
+	}
+	for id, errMsg := range failed {
+		p.log.Warn("conversion failed", "sng_id", id, "err", errMsg)
+	}
+	return nil
 }
 
 // claimBatch claims up to Concurrency tracks for this batch.
