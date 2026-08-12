@@ -375,6 +375,19 @@ func (p *Pipeline) EnqueueIDs(ctx context.Context, kind string, ids []int64) (in
 		}
 
 		for _, fi := range favs {
+			// Only queue PRESENT tracks. REPLACED originals are skipped —
+			// their replacements were upserted by syncTrackIDsWithFavs as waiting.
+			it, _ := p.store.Get(ctx, fi.SngID)
+			if it != nil && it.DeezerStatus != store.DeezerStatusPresent && it.DeezerStatus != "" {
+				// Queue the replacement instead.
+				if it.ReplacementID != 0 {
+					if err := p.store.SetState(ctx, it.ReplacementID, store.StateQueued); err != nil {
+						return queued, err
+					}
+					queued++
+				}
+				continue
+			}
 			if err := p.store.SetState(ctx, fi.SngID, store.StateQueued); err != nil {
 				return queued, err
 			}
