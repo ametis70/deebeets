@@ -70,8 +70,8 @@ type GWTrack struct {
 	PhysicalReleaseDate string              `json:"PHYSICAL_RELEASE_DATE"`
 	DigitalReleaseDate  string              `json:"DIGITAL_RELEASE_DATE"`
 	Copyright           string              `json:"COPYRIGHT"`
-	// Status reflects track availability: "1"=present, "3"=replaced, others=missing.
-	Status              string              `json:"STATUS"`
+	// Status reflects track availability: 1=present, 3=replaced, others=missing.
+	Status              int                 `json:"STATUS"`
 	// Contributors maps contributor role → list of artist names.
 	// Known roles: "main_artist", "featuring", "author", "composer", "conductor", etc.
 	Contributors        map[string][]string `json:"SNG_CONTRIBUTORS"`
@@ -229,10 +229,10 @@ func (t *GWTrack) AlbumArtistString() string {
 // Returns one of store.DeezerStatusPresent/Replaced/Missing.
 func (t *GWTrack) DeezerStatus() string {
 	switch t.Status {
-	case "1", "":
-		// STATUS=1 is present. Empty status (e.g. from getListByAlbum) defaults to present.
+	case 1, 0:
+		// STATUS=1 is present. STATUS=0 (local/unset) defaults to present.
 		return "PRESENT"
-	case "3":
+	case 3:
 		if t.Fallback != nil && t.Fallback.SngID != "" && t.Fallback.SngID != t.SngID {
 			return "REPLACED"
 		}
@@ -242,9 +242,9 @@ func (t *GWTrack) DeezerStatus() string {
 	}
 }
 
-// IsAvailable reports whether the track can be downloaded (STATUS=1).
+// IsAvailable reports whether the track can be downloaded (STATUS=1 or unset).
 func (t *GWTrack) IsAvailable() bool {
-	return t.Status == "1" || t.Status == ""
+	return t.Status == 1 || t.Status == 0
 }
 
 // ReplacementID returns the numeric SNG_ID of the fallback track, or 0.
