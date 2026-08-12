@@ -458,27 +458,24 @@ func min(a, b int) int {
 }
 
 // updateSourceDeezerStatus derives and persists the deezer_status for an album
-// source based on its tracks' statuses. A source is:
-//   REPLACED — if any of its original tracks are REPLACED (and all replacements
-//              point to the same new album)
-//   MISSING  — if any tracks are MISSING (and none are replaced)
-//   PRESENT  — otherwise
+// source based on its *original* tracks' statuses. Replacement tracks (which
+// share the source_id but have a different group_key) are excluded.
 func (p *Pipeline) updateSourceDeezerStatus(ctx context.Context, src deezer.SourceItem) {
 	srcIDStr := fmt.Sprintf("%d", src.ID)
+	srcGroupKey := srcIDStr // for albums, group_key == ALB_ID == source_id
 
-	// Only look at the *original* tracks (the ones actually belonging to this source),
-	// not the replacement entries which also get upserted with the same source_id.
 	allItems, err := p.store.List(ctx, nil, 0)
 	if err != nil {
 		return
 	}
+
+	// Only look at tracks that are original members of this source:
+	// they have source_id == src.ID AND group_key == src.ID.
+	// Replacement tracks share source_id but have a different group_key
+	// (the new album ID), so they're excluded.
 	var originalTracks []*store.Item
 	for _, it := range allItems {
-		if it.SourceType == src.Kind && it.SourceID == srcIDStr {
-			// Only consider tracks that are flagged REPLACED or MISSING —
-			// PRESENT tracks from this source are either originals that are fine,
-			// or replacement entries. We identify originals by their GroupKey
-			// matching the source ID (album tracks have GroupKey=ALB_ID).
+		if it.SourceType == src.Kind && it.SourceID == srcIDStr && it.GroupKey == srcGroupKey {
 			originalTracks = append(originalTracks, it)
 		}
 	}
