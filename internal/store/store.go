@@ -43,6 +43,13 @@ const (
 	StageImporting   = "importing" // legacy alias for converting
 )
 
+// DeezerStatus values reflect the availability of an item on Deezer.
+const (
+	DeezerStatusPresent  = "PRESENT"  // available and downloadable
+	DeezerStatusReplaced = "REPLACED" // replaced by a new ID (FALLBACK present)
+	DeezerStatusMissing  = "MISSING"  // unavailable with no known replacement
+)
+
 // Store wraps the SQLite database.
 type Store struct {
 	db *sql.DB

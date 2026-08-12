@@ -19,7 +19,7 @@ type Item struct {
 	SourceType    string
 	SourceID      string
 	State         string
-	Stage         string // legacy column kept for schema compat; use state for failures
+	Stage         string // legacy column kept for schema compat
 	Format        string
 	FilePath      string
 	Attempts      int
@@ -28,28 +28,32 @@ type Item struct {
 	Error         string
 	TrackData     string // JSON: song.getData response
 	LyricsData    string // JSON: song.getLyrics response (empty if none)
+	DeezerStatus  string // PRESENT | REPLACED | MISSING
+	ReplacementID int64  // SNG_ID of the replacement track (0 if none)
 	CreatedAt     int64
 	UpdatedAt     int64
 }
 
 // Discovered is the metadata a sync knows about a track before downloading.
 type Discovered struct {
-	SngID       int64
-	Title       string
-	Artist      string
-	Album       string
-	AlbumArtist string
-	GroupKey    string
-	SourceType  string
-	SourceID    string
-	TrackData   string // JSON blob from song.getData
-	LyricsData  string // JSON blob from song.getLyrics
+	SngID         int64
+	Title         string
+	Artist        string
+	Album         string
+	AlbumArtist   string
+	GroupKey      string
+	SourceType    string
+	SourceID      string
+	TrackData     string // JSON blob from song.getData
+	LyricsData    string // JSON blob from song.getLyrics
+	DeezerStatus  string // PRESENT | REPLACED | MISSING
+	ReplacementID int64  // SNG_ID of the replacement track (0 if none)
 }
 
 const itemColumns = `sng_id, title, artist, album, album_artist, group_key,
 	source_type, source_id, state, stage, format, file_path,
 	attempts, batch_attempts, in_failed_batch, error, track_data, lyrics_data,
-	created_at, updated_at`
+	deezer_status, replacement_id, created_at, updated_at`
 
 func scanItem(row interface{ Scan(...any) error }) (*Item, error) {
 	var it Item
@@ -59,6 +63,7 @@ func scanItem(row interface{ Scan(...any) error }) (*Item, error) {
 		&it.Format, &it.FilePath,
 		&it.Attempts, &it.BatchAttempts, &inFailed,
 		&it.Error, &it.TrackData, &it.LyricsData,
+		&it.DeezerStatus, &it.ReplacementID,
 		&it.CreatedAt, &it.UpdatedAt)
 	if err != nil {
 		return nil, err
@@ -82,12 +87,18 @@ func (s *Store) Upsert(ctx context.Context, d Discovered) (bool, error) {
 		initial = StateBlocklisted
 	}
 
+	deezerStatus := d.DeezerStatus
+	if deezerStatus == "" {
+		deezerStatus = DeezerStatusPresent
+	}
+
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO items (`+itemColumns+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', '', 0, 0, 0, '', ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', '', 0, 0, 0, '', ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(sng_id) DO NOTHING`,
 		d.SngID, d.Title, d.Artist, d.Album, d.AlbumArtist, d.GroupKey,
-		d.SourceType, d.SourceID, initial, d.TrackData, d.LyricsData, now, now)
+		d.SourceType, d.SourceID, initial,
+		d.TrackData, d.LyricsData, deezerStatus, d.ReplacementID, now, now)
 	if err != nil {
 		return false, err
 	}
@@ -99,10 +110,12 @@ func (s *Store) Upsert(ctx context.Context, d Discovered) (bool, error) {
 	_, err = s.db.ExecContext(ctx, `
 		UPDATE items SET title = ?, artist = ?, album = ?, album_artist = ?,
 			group_key = ?, source_type = ?, source_id = ?,
-			track_data = ?, lyrics_data = ?, updated_at = ?
+			track_data = ?, lyrics_data = ?,
+			deezer_status = ?, replacement_id = ?, updated_at = ?
 		WHERE sng_id = ?`,
 		d.Title, d.Artist, d.Album, d.AlbumArtist, d.GroupKey,
-		d.SourceType, d.SourceID, d.TrackData, d.LyricsData, now, d.SngID)
+		d.SourceType, d.SourceID, d.TrackData, d.LyricsData,
+		deezerStatus, d.ReplacementID, now, d.SngID)
 	return false, err
 }
 
@@ -127,6 +140,60 @@ func (s *Store) List(ctx context.Context, states []string, limit int) ([]*Item, 
 			args = append(args, st)
 		}
 		q += ` WHERE state IN (` + strings.Join(placeholders, ",") + `)`
+	}
+	q += ` ORDER BY updated_at DESC`
+	if limit > 0 {
+		q += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Item
+	for rows.Next() {
+		it, err := scanItem(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+// CountByDeezerStatus returns the number of items per deezer_status.
+func (s *Store) CountByDeezerStatus(ctx context.Context) (map[string]int, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT deezer_status, COUNT(*) FROM items GROUP BY deezer_status`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var st string
+		var n int
+		if err := rows.Scan(&st, &n); err != nil {
+			return nil, err
+		}
+		out[st] = n
+	}
+	return out, rows.Err()
+}
+
+// ListByDeezerStatus returns items with the given deezer_status, optionally
+// further filtered by state. Newest first.
+func (s *Store) ListByDeezerStatus(ctx context.Context, deezerStatus string, states []string, limit int) ([]*Item, error) {
+	q := `SELECT ` + itemColumns + ` FROM items WHERE deezer_status = ?`
+	args := []any{deezerStatus}
+	if len(states) > 0 {
+		placeholders := make([]string, len(states))
+		for i, st := range states {
+			placeholders[i] = "?"
+			args = append(args, st)
+		}
+		q += ` AND state IN (` + strings.Join(placeholders, ",") + `)`
 	}
 	q += ` ORDER BY updated_at DESC`
 	if limit > 0 {
@@ -180,19 +247,36 @@ func (s *Store) UpdateTrackData(ctx context.Context, sngID int64, trackData stri
 	return n > 0, nil
 }
 
-// ClaimDownload atomically claims the oldest pending track for downloading,
-// incrementing its attempt counter. Returns (nil, false, nil) when the queue
-// is empty.
+// CopyStateToReplacement copies the pipeline state (state, format, file_path)
+// from an original item to its replacement. Called when a replacement track is
+// first synced and the original has already been downloaded.
+func (s *Store) CopyStateToReplacement(ctx context.Context, originalSngID, replacementSngID int64) error {
+	original, err := s.Get(ctx, originalSngID)
+	if err != nil || original == nil || original.FilePath == "" {
+		return nil // nothing to copy
+	}
+	_, err = s.db.ExecContext(ctx, `
+		UPDATE items SET state = ?, format = ?, file_path = ?, updated_at = ?
+		WHERE sng_id = ?`,
+		original.State, original.Format, original.FilePath,
+		time.Now().Unix(), replacementSngID)
+	return err
+}
+
+// ClaimDownload atomically claims the oldest pending PRESENT track for downloading,
+// incrementing its attempt counter. REPLACED and MISSING items are skipped.
+// Returns (nil, false, nil) when the queue is empty.
 func (s *Store) ClaimDownload(ctx context.Context) (*Item, bool, error) {
 	row := s.db.QueryRowContext(ctx, `
 		UPDATE items SET state = ?, stage = '', attempts = attempts + 1, updated_at = ?
 		WHERE sng_id = (
 			SELECT sng_id FROM items
-			WHERE state IN (?, ?)
+			WHERE state IN (?, ?) AND (deezer_status = ? OR deezer_status = '')
 			ORDER BY updated_at ASC LIMIT 1
 		)
 		RETURNING `+itemColumns,
-		StateDownloading, time.Now().Unix(), StateWaiting, StateQueued)
+		StateDownloading, time.Now().Unix(),
+		StateWaiting, StateQueued, DeezerStatusPresent)
 	it, err := scanItem(row)
 	if err == sql.ErrNoRows {
 		return nil, false, nil
