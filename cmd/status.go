@@ -110,7 +110,7 @@ func printStatus(st control.StatusResponse) {
 		}
 		tw2.Flush()
 	}
-	fmt.Println("queue:")
+	fmt.Println("tracks:")
 	tw := tabwriter.NewWriter(cmdOut, 0, 0, 2, ' ', 0)
 		labels := map[string]string{
 			store.StateDownloaded:     "downloaded (pending tag)",
