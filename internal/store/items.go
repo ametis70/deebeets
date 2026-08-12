@@ -231,9 +231,13 @@ func (s *Store) ListByDeezerStatus(ctx context.Context, deezerStatus string, sta
 	return out, rows.Err()
 }
 
-// CountByState returns the number of items per state.
+// CountByState returns the number of PRESENT items per state.
+// REPLACED and MISSING items are excluded to avoid double-counting.
 func (s *Store) CountByState(ctx context.Context) (map[string]int, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT state, COUNT(*) FROM items GROUP BY state`)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT state, COUNT(*) FROM items
+		 WHERE deezer_status = ? OR deezer_status = ''
+		 GROUP BY state`, DeezerStatusPresent)
 	if err != nil {
 		return nil, err
 	}
