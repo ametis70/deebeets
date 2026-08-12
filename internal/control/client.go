@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"deeznt/internal/store"
@@ -171,11 +172,18 @@ func (c *Client) Sources(ctx context.Context, kinds []string) ([]store.Source, e
 	return out.Sources, err
 }
 
-// Items lists items in the given states.
-func (c *Client) Items(ctx context.Context, states []string) ([]store.Item, error) {
+// Items lists items filtered by states and optionally by deezer_status.
+func (c *Client) Items(ctx context.Context, states []string, deezerStatus string) ([]store.Item, error) {
 	path := "/items"
+	params := []string{}
 	if len(states) > 0 {
-		path += "?state=" + joinCSV(states)
+		params = append(params, "state="+joinCSV(states))
+	}
+	if deezerStatus != "" {
+		params = append(params, "deezer_status="+deezerStatus)
+	}
+	if len(params) > 0 {
+		path += "?" + strings.Join(params, "&")
 	}
 	var out ItemsResponse
 	err := c.do(ctx, http.MethodGet, path, nil, &out)

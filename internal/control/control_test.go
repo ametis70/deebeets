@@ -57,7 +57,7 @@ func (f *fakeController) BlocklistAdd(_ context.Context, kind string, ids []int6
 }
 func (f *fakeController) BlocklistRemove(context.Context, string, []int64) error { return nil }
 func (f *fakeController) BlocklistList(context.Context) ([]store.Block, error)   { return f.blocked, nil }
-func (f *fakeController) Items(context.Context, []string, int) ([]store.Item, error) {
+func (f *fakeController) Items(context.Context, []string, string, int) ([]store.Item, error) {
 	return []store.Item{{SngID: 1, State: "converted", Title: "T"}}, nil
 }
 func (f *fakeController) Sources(context.Context, []string) ([]store.Source, error) {
@@ -142,7 +142,7 @@ func TestControlRoundTrip(t *testing.T) {
 		t.Fatalf("blocklist = %+v err=%v", blocks, err)
 	}
 
-	items, err := c.Items(ctx, []string{"converted"})
+	items, err := c.Items(ctx, []string{"converted"}, "")
 	if err != nil || len(items) != 1 || items[0].SngID != 1 {
 		t.Fatalf("items = %+v err=%v", items, err)
 	}

@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -57,10 +58,12 @@ func statusCmd() *cobra.Command {
 				stage = store.StageIdle
 			}
 			fmt.Println("daemon: not running (showing database snapshot)")
+			albumAvailability, _ := s.CountSourcesByDeezerStatus(ctx(), store.SourceKindAlbum)
 			printStatus(control.StatusResponse{
-				Stage:    stage,
-				Counts:   counts,
-				LastSync: last,
+				Stage:             stage,
+				Counts:            counts,
+				AlbumAvailability: albumAvailability,
+				LastSync:          last,
 			})
 			return nil
 		},
@@ -96,6 +99,16 @@ func printStatus(st control.StatusResponse) {
 	fmt.Printf("convert:   %s\n", convLabel)
 	if st.LastSync != "" {
 		fmt.Printf("last sync: %s\n", st.LastSync)
+	}
+	if len(st.AlbumAvailability) > 0 {
+		fmt.Println("albums:")
+		tw2 := tabwriter.NewWriter(cmdOut, 0, 0, 2, ' ', 0)
+		for _, s := range []string{store.DeezerStatusPresent, store.DeezerStatusReplaced, store.DeezerStatusMissing} {
+			if n, ok := st.AlbumAvailability[s]; ok && n > 0 {
+				fmt.Fprintf(tw2, "  %s\t%d\n", strings.ToLower(s), n)
+			}
+		}
+		tw2.Flush()
 	}
 	fmt.Println("queue:")
 	tw := tabwriter.NewWriter(cmdOut, 0, 0, 2, ' ', 0)

@@ -276,7 +276,8 @@ func (s *Server) handleItems(w http.ResponseWriter, r *http.Request) {
 	if q := r.URL.Query().Get("state"); q != "" {
 		states = splitCSV(q)
 	}
-	items, err := s.ctrl.Items(r.Context(), states, 0)
+	deezerStatus := r.URL.Query().Get("deezer_status")
+	items, err := s.ctrl.Items(r.Context(), states, deezerStatus, 0)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return

@@ -110,6 +110,7 @@ Full metadata for a single track, including contributors and lyrics ID.
 | `TRACK_TOKEN_EXPIRE` | int | Unix timestamp of token expiry |
 | `MD5_ORIGIN` | string | Used for legacy CDN URL construction |
 | `MEDIA_VERSION` | string | Used for legacy CDN URL construction |
+| `STATUS` | string | Track availability: `"1"`=present, `"3"`=replaced (see FALLBACK), others=unavailable |
 
 **`ARTISTS` array entry:**
 
@@ -139,6 +140,11 @@ Full metadata for a single track, including contributors and lyrics ID.
 
 > **Note:** `SNG_CONTRIBUTORS` is `null` on some tracks. Always check for nil.
 > Key names use underscores (`main_artist`, `featuring`), not camelCase.
+>
+> **`STATUS` field:** `"1"` = available. `"3"` = replaced — the track has been
+> migrated to a new ID. The `FALLBACK` object contains the full replacement
+> track data including its own `SNG_ID`, `ALB_ID`, and `TRACK_TOKEN`. Only
+> observed values are `1` and `3`; treat anything else as unavailable.
 
 ---
 

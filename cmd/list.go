@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -14,24 +15,19 @@ func listCmd() *cobra.Command {
 	var states []string
 	var limit int
 	var albums, artists, playlists, tracks bool
+	var deezerStatus string
 
 	c := &cobra.Command{
 		Use:   "list",
 		Short: "List queue items or sources",
-		Long: "With no flags, lists all tracks.\n" +
-			"Use --albums, --artists, --playlists to list sources instead.\n" +
-			"Use --tracks with a source flag to list tracks for that source kind.",
+		Long: "With no flags, lists all PRESENT tracks (excludes replaced/missing).\n" +
+			"Use --deezer-status replaced|missing|present to filter by availability.\n" +
+			"Use --albums, --artists, --playlists to list sources instead.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			showSources := albums || artists || playlists
-
-			// --tracks alone (no source flag): list tracks as before.
-			// --tracks with source flag: list tracks filtered to that source kind.
-			// source flag alone: list sources of that kind.
 			if showSources && !tracks {
-				return listSources(albums, artists, playlists)
+				return listSources(albums, artists, playlists, deezerStatus)
 			}
-
-			// Track listing — optionally filter by source kind.
 			var sourceKindFilter []string
 			if albums {
 				sourceKindFilter = append(sourceKindFilter, store.KindAlbum)
@@ -42,8 +38,7 @@ func listCmd() *cobra.Command {
 			if playlists {
 				sourceKindFilter = append(sourceKindFilter, store.KindPlaylist)
 			}
-
-			return listTracks(states, limit, sourceKindFilter)
+			return listTracks(states, limit, sourceKindFilter, deezerStatus)
 		},
 	}
 	c.Flags().StringSliceVar(&states, "state", nil, "filter tracks by state(s), comma-separated")
@@ -52,10 +47,11 @@ func listCmd() *cobra.Command {
 	c.Flags().BoolVar(&artists, "artists", false, "list artists (sources)")
 	c.Flags().BoolVar(&playlists, "playlists", false, "list playlists (sources)")
 	c.Flags().BoolVar(&tracks, "tracks", false, "list tracks (use with source flags to filter by source kind)")
+	c.Flags().StringVar(&deezerStatus, "deezer-status", "", "filter by Deezer availability: present|replaced|missing")
 	return c
 }
 
-func listSources(albums, artists, playlists bool) error {
+func listSources(albums, artists, playlists bool, deezerStatus string) error {
 	var kinds []string
 	if albums {
 		kinds = append(kinds, store.KindAlbum)
@@ -71,23 +67,49 @@ func listSources(albums, artists, playlists bool) error {
 	if err != nil {
 		return err
 	}
+
+	// Filter by deezer_status if specified.
+	if deezerStatus != "" {
+		dsUpper := strings.ToUpper(deezerStatus)
+		filtered := sources[:0]
+		for _, s := range sources {
+			if s.DeezerStatus == dsUpper || (s.DeezerStatus == "" && dsUpper == store.DeezerStatusPresent) {
+				filtered = append(filtered, s)
+			}
+		}
+		sources = filtered
+	}
+
 	if len(sources) == 0 {
 		fmt.Println("no sources")
 		return nil
 	}
 	tw := tabwriter.NewWriter(cmdOut, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "KIND\tID\tSTATE\tTRACKS\tARTIST\tNAME")
+	fmt.Fprintln(tw, "KIND\tID\tSTATUS\tSTATE\tTRACKS\tREPLACED_BY\tARTIST\tNAME")
 	for _, s := range sources {
-		fmt.Fprintf(tw, "%s\t%d\t%s\t%d\t%s\t%s\n",
-			s.Kind, s.ExtID, s.State, s.TrackCount,
-			trunc(s.Artist, 24), trunc(s.Name, 40))
+		replBy := ""
+		if s.ReplacementID > 0 {
+			replBy = fmt.Sprintf("%d", s.ReplacementID)
+		}
+		fmt.Fprintf(tw, "%s\t%d\t%s\t%s\t%d\t%s\t%s\t%s\n",
+			s.Kind, s.ExtID, s.DeezerStatus, s.State, s.TrackCount,
+			replBy, trunc(s.Artist, 24), trunc(s.Name, 40))
 	}
 	tw.Flush()
 	return nil
 }
 
-func listTracks(states []string, limit int, sourceKindFilter []string) error {
-	items, err := fetchItems(states, limit)
+func listTracks(states []string, limit int, sourceKindFilter []string, deezerStatus string) error {
+	// Default: hide replaced/missing unless explicitly requested.
+	if deezerStatus == "" {
+		deezerStatus = store.DeezerStatusPresent
+	}
+	// "all" opt-out: show everything.
+	if strings.ToLower(deezerStatus) == "all" {
+		deezerStatus = ""
+	}
+
+	items, err := fetchItems(states, limit, deezerStatus)
 	if err != nil {
 		return err
 	}
@@ -112,23 +134,39 @@ func listTracks(states []string, limit int, sourceKindFilter []string) error {
 		return nil
 	}
 	tw := tabwriter.NewWriter(cmdOut, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "SNG_ID\tSTATE\tARTIST\tTITLE\tFORMAT\tERROR")
+	showReplaced := deezerStatus == "" || strings.ToUpper(deezerStatus) == store.DeezerStatusReplaced
+	if showReplaced {
+		fmt.Fprintln(tw, "SNG_ID\tSTATUS\tSTATE\tARTIST\tTITLE\tFORMAT\tREPLACED_BY\tERROR")
+	} else {
+		fmt.Fprintln(tw, "SNG_ID\tSTATE\tARTIST\tTITLE\tFORMAT\tERROR")
+	}
 	for _, it := range items {
-		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\n",
-			it.SngID, it.State, trunc(it.Artist, 24), trunc(it.Title, 32),
-			it.Format, trunc(it.Error, 40))
+		if showReplaced {
+			replBy := ""
+			if it.ReplacementID > 0 {
+				replBy = fmt.Sprintf("%d", it.ReplacementID)
+			}
+			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				it.SngID, it.DeezerStatus, it.State,
+				trunc(it.Artist, 24), trunc(it.Title, 32),
+				it.Format, replBy, trunc(it.Error, 40))
+		} else {
+			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\n",
+				it.SngID, it.State, trunc(it.Artist, 24), trunc(it.Title, 32),
+				it.Format, trunc(it.Error, 40))
+		}
 	}
 	tw.Flush()
 	return nil
 }
 
-func fetchItems(states []string, limit int) ([]store.Item, error) {
+func fetchItems(states []string, limit int, deezerStatus string) ([]store.Item, error) {
 	client, err := newClient()
 	if err != nil {
 		return nil, err
 	}
 	if client.Available() {
-		return client.Items(ctx(), states)
+		return client.Items(ctx(), states, deezerStatus)
 	}
 	cfg, err := loadConfig()
 	if err != nil {
@@ -139,7 +177,12 @@ func fetchItems(states []string, limit int) ([]store.Item, error) {
 		return nil, err
 	}
 	defer s.Close()
-	ptrs, err := s.List(ctx(), states, limit)
+	var ptrs []*store.Item
+	if deezerStatus != "" {
+		ptrs, err = s.ListByDeezerStatus(ctx(), deezerStatus, states, limit)
+	} else {
+		ptrs, err = s.List(ctx(), states, limit)
+	}
 	if err != nil {
 		return nil, err
 	}

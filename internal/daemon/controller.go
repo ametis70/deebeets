@@ -28,15 +28,18 @@ func (d *Daemon) Status(ctx context.Context) (control.StatusResponse, error) {
 	failedByStage, _ := d.store.CountFailedByStage(ctx)
 	_ = failedByStage // counts now visible directly in state names
 
+	albumAvailability, _ := d.store.CountSourcesByDeezerStatus(ctx, store.SourceKindAlbum)
+
 	return control.StatusResponse{
-		Stage:           stage,
-		Syncing:         stage == store.StageSyncing,
-		Downloading:     stage == store.StageDownloading,
-		Tagging:         stage == store.StageTagging,
-		Converting:      convertingCount > 0 || stage == store.StageConverting || stage == store.StageImporting,
-		ConvertingCount: convertingCount,
-		Counts:          counts,
-		LastSync:        lastSync,
+		Stage:             stage,
+		Syncing:           stage == store.StageSyncing,
+		Downloading:       stage == store.StageDownloading,
+		Tagging:           stage == store.StageTagging,
+		Converting:        convertingCount > 0 || stage == store.StageConverting || stage == store.StageImporting,
+		ConvertingCount:   convertingCount,
+		Counts:            counts,
+		AlbumAvailability: albumAvailability,
+		LastSync:          lastSync,
 	}, nil
 }
 
@@ -225,14 +228,20 @@ func (d *Daemon) BlocklistList(ctx context.Context) ([]store.Block, error) {
 	return d.store.ListBlocks(ctx)
 }
 
-// Items lists items in the given states.
-func (d *Daemon) Items(ctx context.Context, states []string, limit int) ([]store.Item, error) {
-	items, err := d.store.List(ctx, states, limit)
+// Items lists items in the given states, optionally filtered by deezer_status.
+func (d *Daemon) Items(ctx context.Context, states []string, deezerStatus string, limit int) ([]store.Item, error) {
+	var ptrs []*store.Item
+	var err error
+	if deezerStatus != "" {
+		ptrs, err = d.store.ListByDeezerStatus(ctx, deezerStatus, states, limit)
+	} else {
+		ptrs, err = d.store.List(ctx, states, limit)
+	}
 	if err != nil {
 		return nil, err
 	}
-	out := make([]store.Item, 0, len(items))
-	for _, it := range items {
+	out := make([]store.Item, 0, len(ptrs))
+	for _, it := range ptrs {
 		out = append(out, *it)
 	}
 	return out, nil

@@ -42,7 +42,7 @@ type Controller interface {
 	// files and reconverts everything; "failed" retries state=downloaded items.
 	Reconvert(ctx context.Context, mode string) (int, error)
 
-	Items(ctx context.Context, states []string, limit int) ([]store.Item, error)
+	Items(ctx context.Context, states []string, deezerStatus string, limit int) ([]store.Item, error)
 	Sources(ctx context.Context, kinds []string) ([]store.Source, error)
 }
 
@@ -63,7 +63,9 @@ type StatusResponse struct {
 	Converting      bool           `json:"converting"`
 	ConvertingCount int            `json:"converting_count"`
 	Counts          map[string]int `json:"counts"`
-	LastSync        string         `json:"last_sync,omitempty"`
+	// Availability counts by deezer_status for album sources.
+	AlbumAvailability map[string]int `json:"album_availability,omitempty"`
+	LastSync          string         `json:"last_sync,omitempty"`
 }
 
 // SyncStartRequest selects favorite types to pull.
@@ -99,6 +101,13 @@ type BlocklistRequest struct {
 	Kind   string  `json:"kind"`
 	IDs    []int64 `json:"ids"`
 	Reason string  `json:"reason,omitempty"`
+}
+
+// ItemsRequest filters items.
+type ItemsRequest struct {
+	States       []string `json:"states,omitempty"`
+	DeezerStatus string   `json:"deezer_status,omitempty"` // PRESENT | REPLACED | MISSING
+	Limit        int      `json:"limit,omitempty"`
 }
 
 // ItemsResponse carries a list of items.
