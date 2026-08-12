@@ -2,6 +2,7 @@ package downloader
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -82,6 +83,13 @@ func (p *Pipeline) Sync(ctx context.Context, sel deezer.Selection, refresh bool)
 
 			_ = p.store.SetSourceState(ctx, src.Kind, src.ID, store.SourceStateSynced, "")
 			_ = p.store.SetSourceTrackCount(ctx, src.Kind, src.ID, len(favs))
+
+			// Derive source-level deezer_status from its tracks.
+			// All tracks REPLACED to the same new album → source REPLACED.
+			// Any MISSING → source MISSING. Otherwise PRESENT.
+			if src.Kind == store.SourceKindAlbum {
+				p.updateSourceDeezerStatus(ctx, src)
+			}
 		}
 	}
 
@@ -116,10 +124,12 @@ func (p *Pipeline) syncTrackIDs(ctx context.Context, ids []int64, sourceType, so
 func (p *Pipeline) syncTrackIDsWithFavs(ctx context.Context, ids []int64, favs []deezer.FavItem, refresh bool, res *SyncResult) error {
 	// Fetch full song.getData for each track in parallel (bounded concurrency).
 	type metaResult struct {
-		fi         deezer.FavItem
-		trackData  string
-		lyricsData string
-		err        error
+		fi          deezer.FavItem
+		track       *deezer.GWTrack // parsed track (nil on error)
+		trackData   string
+		fallbackRaw string          // raw JSON of FALLBACK track (for replacement upsert)
+		lyricsData  string
+		err         error
 	}
 
 	sem := make(chan struct{}, p.cfg.Download.Concurrency)
@@ -150,13 +160,12 @@ func (p *Pipeline) syncTrackIDsWithFavs(ctx context.Context, ids []int64, favs [
 				return
 			}
 
-			// Fetch lyrics if available.
+			// Fetch lyrics if available (only for PRESENT tracks).
 			var lyricsData string
-			if track.LyricsID != 0 {
+			if track.IsAvailable() && track.LyricsID != 0 {
 				if ld, err := p.dz.GetLyricsRaw(ctx, fi.SngID); err == nil {
 					lyricsData = ld
 				}
-				// Lyrics errors are non-fatal — we still have the track.
 			}
 
 			// Cache album.getData (shared across all tracks on the same album).
@@ -168,21 +177,56 @@ func (p *Pipeline) syncTrackIDsWithFavs(ctx context.Context, ids []int64, favs [
 				}
 			}
 
-			results[i] = metaResult{fi: fi, trackData: trackData, lyricsData: lyricsData}
+			// For replaced tracks, serialise the FALLBACK data for the replacement upsert.
+			var fallbackRaw string
+			if track.Fallback != nil && track.Fallback.SngID != "" {
+				if fb, err := json.Marshal(track.Fallback); err == nil {
+					fallbackRaw = string(fb)
+				}
+			}
+
+			results[i] = metaResult{
+				fi:          fi,
+				track:       track,
+				trackData:   trackData,
+				fallbackRaw: fallbackRaw,
+				lyricsData:  lyricsData,
+			}
 		}()
 	}
 	wg.Wait()
 
-	// Upsert all tracks.
+	// Upsert all tracks, handling REPLACED/MISSING status and replacements.
 	for _, r := range results {
 		if r.fi.SngID == 0 {
 			continue // skipped (already cached)
 		}
 		if r.err != nil {
 			p.log.Warn("failed to fetch track metadata at sync time", "sng_id", r.fi.SngID, "err", r.err)
-			// Still upsert with empty metadata — download will re-fetch.
+			// Still upsert with empty metadata and MISSING status.
 		}
+
+		// Determine deezer status from the fetched track.
+		deezerStatus := store.DeezerStatusPresent
+		var replacementID int64
+		var replacementTrack *deezer.GWTrack
+		var replacementRaw string
+
+		if r.track != nil {
+			deezerStatus = r.track.DeezerStatus()
+			replacementID = r.track.ReplacementID()
+			if deezerStatus == store.DeezerStatusReplaced && r.track.Fallback != nil {
+				replacementTrack = r.track.Fallback
+				replacementRaw = r.fallbackRaw
+			}
+		} else if r.err != nil {
+			deezerStatus = store.DeezerStatusMissing
+		}
+
+		// Upsert the original item.
 		d := toDiscoveredWithMeta(r.fi, r.trackData, r.lyricsData)
+		d.DeezerStatus = deezerStatus
+		d.ReplacementID = replacementID
 		inserted, err := p.store.Upsert(ctx, d)
 		if err != nil {
 			return err
@@ -190,6 +234,46 @@ func (p *Pipeline) syncTrackIDsWithFavs(ctx context.Context, ids []int64, favs [
 		res.Total++
 		if inserted {
 			res.New++
+		}
+
+		// For REPLACED tracks: also upsert the replacement entry.
+		// The replacement inherits the original's pipeline state and file_path
+		// if already downloaded — same audio, just a new Deezer ID.
+		if deezerStatus == store.DeezerStatusReplaced && replacementTrack != nil {
+			repFav := trackGWToFav(replacementTrack, r.fi.SourceType, r.fi.SourceID)
+			repDiscovered := toDiscoveredWithMeta(repFav, replacementRaw, "")
+			repDiscovered.DeezerStatus = store.DeezerStatusPresent
+
+			// Fetch lyrics for replacement if it has a different LYRICS_ID.
+			if replacementTrack.LyricsID != 0 {
+				if ld, err := p.dz.GetLyricsRaw(ctx, replacementTrack.ID()); err == nil {
+					repDiscovered.LyricsData = ld
+				}
+			}
+
+			// Cache album for replacement if different.
+			if albID := replacementTrack.AlbumID(); albID > 0 {
+				if cached, _ := p.store.GetAlbumCache(ctx, albID); cached == "" || refresh {
+					if albumData, err := p.dz.GetAlbumRaw(ctx, albID); err == nil {
+						_ = p.store.UpsertAlbumCache(ctx, albID, albumData)
+					}
+				}
+			}
+
+			repInserted, err := p.store.Upsert(ctx, repDiscovered)
+			if err != nil {
+				return err
+			}
+			if repInserted {
+				// New replacement entry: copy state from the original if already downloaded.
+				original, _ := p.store.Get(ctx, r.fi.SngID)
+				if original != nil && original.FilePath != "" {
+					// Same file — copy state and file_path to the replacement.
+					_ = p.store.CopyStateToReplacement(ctx, r.fi.SngID, replacementTrack.ID())
+				}
+				res.New++
+			}
+			res.Total++
 		}
 	}
 	return nil
@@ -371,4 +455,60 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// updateSourceDeezerStatus derives and persists the deezer_status for an album
+// source based on its tracks' statuses.
+func (p *Pipeline) updateSourceDeezerStatus(ctx context.Context, src deezer.SourceItem) {
+	items, err := p.store.List(ctx, nil, 0)
+	if err != nil {
+		return
+	}
+	// Filter to tracks belonging to this source.
+	srcIDStr := fmt.Sprintf("%d", src.ID)
+	var tracks []*store.Item
+	for _, it := range items {
+		if it.SourceType == src.Kind && it.SourceID == srcIDStr {
+			tracks = append(tracks, it)
+		}
+	}
+	if len(tracks) == 0 {
+		return
+	}
+
+	hasMissing := false
+	allReplaced := true
+	var replacementAlbID int64
+
+	for _, t := range tracks {
+		switch t.DeezerStatus {
+		case store.DeezerStatusMissing:
+			hasMissing = true
+			allReplaced = false
+		case store.DeezerStatusReplaced:
+			// Extract ALB_ID from replacement's track_data to find the new album.
+			repItem, _ := p.store.Get(ctx, t.ReplacementID)
+			if repItem != nil {
+				newAlbID := extractAlbIDFromTrackData(repItem.TrackData)
+				if replacementAlbID == 0 {
+					replacementAlbID = newAlbID
+				} else if replacementAlbID != newAlbID {
+					allReplaced = false // tracks point to different albums
+				}
+			} else {
+				allReplaced = false
+			}
+		default:
+			allReplaced = false
+		}
+	}
+
+	switch {
+	case hasMissing:
+		_ = p.store.SetSourceDeezerStatus(ctx, src.Kind, src.ID, store.DeezerStatusMissing, 0)
+	case allReplaced && replacementAlbID > 0:
+		_ = p.store.SetSourceDeezerStatus(ctx, src.Kind, src.ID, store.DeezerStatusReplaced, replacementAlbID)
+	default:
+		_ = p.store.SetSourceDeezerStatus(ctx, src.Kind, src.ID, store.DeezerStatusPresent, 0)
+	}
 }
