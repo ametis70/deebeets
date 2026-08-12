@@ -137,11 +137,27 @@ func (p *Pipeline) syncTrackIDsWithFavs(ctx context.Context, ids []int64, favs [
 	var wg sync.WaitGroup
 
 	for i, fi := range favs {
-		// Skip if already cached and not refreshing.
+		// Use cache if available and not refreshing — but still parse
+		// the cached track_data to get STATUS/FALLBACK for deezer_status logic.
 		if !refresh {
 			existing, err := p.store.Get(ctx, fi.SngID)
 			if err == nil && existing != nil && existing.TrackData != "" {
-				results[i] = metaResult{fi: fi, trackData: existing.TrackData, lyricsData: existing.LyricsData}
+				var cachedTrack deezer.GWTrack
+				var fallbackRaw string
+				if err := json.Unmarshal([]byte(existing.TrackData), &cachedTrack); err == nil {
+					if cachedTrack.Fallback != nil && cachedTrack.Fallback.SngID != "" {
+						if fb, err := json.Marshal(cachedTrack.Fallback); err == nil {
+							fallbackRaw = string(fb)
+						}
+					}
+				}
+				results[i] = metaResult{
+					fi:          fi,
+					track:       &cachedTrack,
+					trackData:   existing.TrackData,
+					fallbackRaw: fallbackRaw,
+					lyricsData:  existing.LyricsData,
+				}
 				continue
 			}
 		}
