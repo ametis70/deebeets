@@ -259,8 +259,6 @@ func (p *Pipeline) syncTrackIDsWithFavs(ctx context.Context, ids []int64, favs [
 		}
 
 		// For REPLACED tracks: also upsert the replacement entry.
-		// The replacement inherits the original's pipeline state and file_path
-		// if already downloaded — same audio, just a new Deezer ID.
 		if deezerStatus == store.DeezerStatusReplaced && replacementTrack != nil {
 			repFav := trackGWToFav(replacementTrack, r.fi.SourceType, r.fi.SourceID)
 			repDiscovered := toDiscoveredWithMeta(repFav, replacementRaw, "")
@@ -273,11 +271,31 @@ func (p *Pipeline) syncTrackIDsWithFavs(ctx context.Context, ids []int64, favs [
 				}
 			}
 
-			// Cache album for replacement if different.
+			// Cache album for replacement if different, and upsert it as a source.
 			if albID := replacementTrack.AlbumID(); albID > 0 {
+				albumData := ""
 				if cached, _ := p.store.GetAlbumCache(ctx, albID); cached == "" || refresh {
-					if albumData, err := p.dz.GetAlbumRaw(ctx, albID); err == nil {
-						_ = p.store.UpsertAlbumCache(ctx, albID, albumData)
+					if ad, err := p.dz.GetAlbumRaw(ctx, albID); err == nil {
+						_ = p.store.UpsertAlbumCache(ctx, albID, ad)
+						albumData = ad
+					}
+				} else {
+					albumData = cached
+				}
+				// Upsert replacement album as a source so it appears in `list --albums`.
+				if r.fi.SourceType == store.SourceKindAlbum {
+					repAlbName, repArtName := replacementTrack.AlbTitle, replacementTrack.AlbumArtistString()
+					if albumData != "" {
+						var alb deezer.GWAlbum
+						if json.Unmarshal([]byte(albumData), &alb) == nil {
+							repAlbName = alb.AlbTitle
+							if alb.ArtName != "" {
+								repArtName = alb.ArtName
+							}
+						}
+					}
+					if _, err := p.store.UpsertSource(ctx, store.SourceKindAlbum, albID, repAlbName, repArtName); err == nil {
+						_ = p.store.SetSourceState(ctx, store.SourceKindAlbum, albID, store.SourceStateSynced, "")
 					}
 				}
 			}
@@ -287,10 +305,8 @@ func (p *Pipeline) syncTrackIDsWithFavs(ctx context.Context, ids []int64, favs [
 				return err
 			}
 			if repInserted {
-				// New replacement entry: copy state from the original if already downloaded.
 				original, _ := p.store.Get(ctx, r.fi.SngID)
 				if original != nil && original.FilePath != "" {
-					// Same file — copy state and file_path to the replacement.
 					_ = p.store.CopyStateToReplacement(ctx, r.fi.SngID, replacementTrack.ID())
 				}
 				res.New++
@@ -298,6 +314,34 @@ func (p *Pipeline) syncTrackIDsWithFavs(ctx context.Context, ids []int64, favs [
 			res.Total++
 		}
 	}
+	// Update track counts for any replacement album sources that were created.
+	// Count by looking at items whose group_key matches the replacement album ID.
+	replacementAlbIDs := map[int64]bool{}
+	for _, r := range results {
+		if r.track != nil && r.track.DeezerStatus() == store.DeezerStatusReplaced {
+			if albID := r.track.ReplacementID(); albID != 0 {
+				if rep, _ := p.store.Get(ctx, albID); rep != nil {
+					if repAlbID := extractAlbIDFromTrackData(rep.TrackData); repAlbID > 0 {
+						replacementAlbIDs[repAlbID] = true
+					}
+				}
+			}
+		}
+	}
+	for repAlbID := range replacementAlbIDs {
+		items, _ := p.store.List(ctx, nil, 0)
+		count := 0
+		repAlbIDStr := fmt.Sprintf("%d", repAlbID)
+		for _, it := range items {
+			if it.GroupKey == repAlbIDStr {
+				count++
+			}
+		}
+		if count > 0 {
+			_ = p.store.SetSourceTrackCount(ctx, store.SourceKindAlbum, repAlbID, count)
+		}
+	}
+
 	return nil
 }
 

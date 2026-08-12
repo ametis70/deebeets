@@ -12,7 +12,7 @@ services:
     build: .
     environment:
       DEEZNT_SECRET: test
-      DEEZNT_FIXTURE_ALBUMS: "281262861"
+      DEEZNT_FIXTURE_ALBUMS: "281262861,610116782"
       TZ: America/Argentina/Buenos_Aires
     command: ["daemon", "--config", "/config/config.docker.toml"]
     volumes:
