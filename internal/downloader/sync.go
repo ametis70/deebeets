@@ -458,56 +458,64 @@ func min(a, b int) int {
 }
 
 // updateSourceDeezerStatus derives and persists the deezer_status for an album
-// source based on its tracks' statuses.
+// source based on its tracks' statuses. A source is:
+//   REPLACED — if any of its original tracks are REPLACED (and all replacements
+//              point to the same new album)
+//   MISSING  — if any tracks are MISSING (and none are replaced)
+//   PRESENT  — otherwise
 func (p *Pipeline) updateSourceDeezerStatus(ctx context.Context, src deezer.SourceItem) {
-	items, err := p.store.List(ctx, nil, 0)
+	srcIDStr := fmt.Sprintf("%d", src.ID)
+
+	// Only look at the *original* tracks (the ones actually belonging to this source),
+	// not the replacement entries which also get upserted with the same source_id.
+	allItems, err := p.store.List(ctx, nil, 0)
 	if err != nil {
 		return
 	}
-	// Filter to tracks belonging to this source.
-	srcIDStr := fmt.Sprintf("%d", src.ID)
-	var tracks []*store.Item
-	for _, it := range items {
+	var originalTracks []*store.Item
+	for _, it := range allItems {
 		if it.SourceType == src.Kind && it.SourceID == srcIDStr {
-			tracks = append(tracks, it)
+			// Only consider tracks that are flagged REPLACED or MISSING —
+			// PRESENT tracks from this source are either originals that are fine,
+			// or replacement entries. We identify originals by their GroupKey
+			// matching the source ID (album tracks have GroupKey=ALB_ID).
+			originalTracks = append(originalTracks, it)
 		}
 	}
-	if len(tracks) == 0 {
+	if len(originalTracks) == 0 {
 		return
 	}
 
-	hasMissing := false
-	allReplaced := true
+	var hasMissing bool
+	var hasReplaced bool
 	var replacementAlbID int64
+	replacementConsistent := true
 
-	for _, t := range tracks {
+	for _, t := range originalTracks {
 		switch t.DeezerStatus {
 		case store.DeezerStatusMissing:
 			hasMissing = true
-			allReplaced = false
 		case store.DeezerStatusReplaced:
-			// Extract ALB_ID from replacement's track_data to find the new album.
+			hasReplaced = true
 			repItem, _ := p.store.Get(ctx, t.ReplacementID)
 			if repItem != nil {
 				newAlbID := extractAlbIDFromTrackData(repItem.TrackData)
 				if replacementAlbID == 0 {
 					replacementAlbID = newAlbID
 				} else if replacementAlbID != newAlbID {
-					allReplaced = false // tracks point to different albums
+					replacementConsistent = false
 				}
 			} else {
-				allReplaced = false
+				replacementConsistent = false
 			}
-		default:
-			allReplaced = false
 		}
 	}
 
 	switch {
+	case hasReplaced && replacementConsistent && replacementAlbID > 0:
+		_ = p.store.SetSourceDeezerStatus(ctx, src.Kind, src.ID, store.DeezerStatusReplaced, replacementAlbID)
 	case hasMissing:
 		_ = p.store.SetSourceDeezerStatus(ctx, src.Kind, src.ID, store.DeezerStatusMissing, 0)
-	case allReplaced && replacementAlbID > 0:
-		_ = p.store.SetSourceDeezerStatus(ctx, src.Kind, src.ID, store.DeezerStatusReplaced, replacementAlbID)
 	default:
 		_ = p.store.SetSourceDeezerStatus(ctx, src.Kind, src.ID, store.DeezerStatusPresent, 0)
 	}

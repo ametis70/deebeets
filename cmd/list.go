@@ -68,8 +68,8 @@ func listSources(albums, artists, playlists bool, deezerStatus string) error {
 		return err
 	}
 
-	// Filter by deezer_status if specified.
-	if deezerStatus != "" {
+	// Filter by deezer_status if specified (empty or "all" = no filter).
+	if deezerStatus != "" && strings.ToLower(deezerStatus) != "all" {
 		dsUpper := strings.ToUpper(deezerStatus)
 		filtered := sources[:0]
 		for _, s := range sources {
