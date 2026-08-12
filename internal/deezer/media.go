@@ -68,7 +68,7 @@ func (c *Client) getTrackURLViaMedia(ctx context.Context, trackToken, format str
 		"track_tokens": []string{trackToken},
 	}
 	body, _ := json.Marshal(payload)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, mediaURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.mediaURL, bytes.NewReader(body))
 	if err != nil {
 		return "", err
 	}

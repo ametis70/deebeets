@@ -21,7 +21,9 @@ const (
 
 // Client is a logged-in Deezer session. It is safe for concurrent use.
 type Client struct {
-	http *http.Client
+	http     *http.Client
+	gwURL    string // overridable for tests
+	mediaURL string // overridable for tests
 
 	mu       sync.Mutex
 	arl      string
@@ -38,20 +40,36 @@ type Client struct {
 
 // New creates a client for the given ARL cookie.
 func New(arl string) (*Client, error) {
+	return newClient(arl, nil, gwURL, mediaURL)
+}
+
+// NewWithBaseURLs creates a client with custom base URLs — used in tests to
+// point at a local mock server.
+func NewWithBaseURLs(arl, gwBaseURL, mediaBaseURL string) (*Client, error) {
+	return newClient(arl, nil, gwBaseURL, mediaBaseURL)
+}
+
+func newClient(arl string, httpClient *http.Client, gw, media string) (*Client, error) {
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		return nil, err
 	}
-	c := &Client{
-		// No client-level Timeout: all requests use context, and the body-read
-		// timeout would cut off large FLAC downloads on slow connections.
-		http: &http.Client{Jar: jar},
-		arl:  arl,
+	h := httpClient
+	if h == nil {
+		h = &http.Client{Jar: jar}
+	} else {
+		h.Jar = jar
 	}
 	u, _ := url.Parse("https://www.deezer.com")
 	jar.SetCookies(u, []*http.Cookie{{
 		Name: "arl", Value: arl, Path: "/", Domain: ".deezer.com",
 	}})
+	c := &Client{
+		http:     h,
+		gwURL:    gw,
+		mediaURL: media,
+		arl:      arl,
+	}
 	return c, nil
 }
 
@@ -98,7 +116,7 @@ func (c *Client) apiCallRetry(ctx context.Context, method string, args any, retr
 	q.Set("method", method)
 	q.Set("api_token", token)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, gwURL+"?"+q.Encode(), bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.gwURL+"?"+q.Encode(), bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
