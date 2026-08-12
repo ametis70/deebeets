@@ -368,6 +368,10 @@ func (p *Pipeline) EnqueueIDs(ctx context.Context, kind string, ids []int64) (in
 			}
 			_ = p.store.SetSourceTrackCount(ctx, kind, id, len(favs))
 			_ = p.store.SetSourceState(ctx, kind, id, store.SourceStateSynced, "")
+			// Derive source deezer_status from its tracks (handles REPLACED albums).
+			if kind == store.SourceKindAlbum {
+				p.updateSourceDeezerStatus(ctx, src)
+			}
 		}
 
 		for _, fi := range favs {
@@ -532,15 +536,10 @@ func (p *Pipeline) updateSourceDeezerStatus(ctx context.Context, src deezer.Sour
 
 	switch {
 	case hasReplaced && replacementConsistent && replacementAlbID > 0:
-		p.log.Info("setting source deezer_status=REPLACED", "kind", src.Kind, "id", src.ID, "replacement_alb_id", replacementAlbID)
 		_ = p.store.SetSourceDeezerStatus(ctx, src.Kind, src.ID, store.DeezerStatusReplaced, replacementAlbID)
 	case hasMissing:
-		p.log.Info("setting source deezer_status=MISSING", "kind", src.Kind, "id", src.ID)
 		_ = p.store.SetSourceDeezerStatus(ctx, src.Kind, src.ID, store.DeezerStatusMissing, 0)
 	default:
-		p.log.Info("setting source deezer_status=PRESENT", "kind", src.Kind, "id", src.ID,
-			"original_tracks", len(originalTracks), "has_replaced", hasReplaced, "has_missing", hasMissing,
-			"replacement_consistent", replacementConsistent, "replacement_alb_id", replacementAlbID)
 		_ = p.store.SetSourceDeezerStatus(ctx, src.Kind, src.ID, store.DeezerStatusPresent, 0)
 	}
 }
