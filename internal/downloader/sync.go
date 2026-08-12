@@ -252,6 +252,12 @@ func (p *Pipeline) syncTrackIDsWithFavs(ctx context.Context, ids []int64, favs [
 			res.New++
 		}
 
+		// If REPLACED and replacement already exists and has progressed,
+		// mirror its state onto the original so it doesn't linger as "queued".
+		if deezerStatus == store.DeezerStatusReplaced && replacementID != 0 {
+			_ = p.store.SyncReplacedState(ctx, r.fi.SngID, replacementID)
+		}
+
 		// For REPLACED tracks: also upsert the replacement entry.
 		// The replacement inherits the original's pipeline state and file_path
 		// if already downloaded — same audio, just a new Deezer ID.

@@ -119,6 +119,21 @@ func (s *Store) Upsert(ctx context.Context, d Discovered) (bool, error) {
 	return false, err
 }
 
+// SyncReplacedState copies the state, format, and file_path from a replacement
+// item to the REPLACED original, so both reflect the same pipeline progress.
+// Called after upserting a REPLACED item when its replacement already exists.
+func (s *Store) SyncReplacedState(ctx context.Context, replacedSngID, replacementSngID int64) error {
+	rep, err := s.Get(ctx, replacementSngID)
+	if err != nil || rep == nil || rep.State == StateWaiting || rep.State == StateQueued {
+		return nil // replacement hasn't progressed yet; nothing to copy
+	}
+	_, err = s.db.ExecContext(ctx, `
+		UPDATE items SET state = ?, format = ?, file_path = ?, updated_at = ?
+		WHERE sng_id = ?`,
+		rep.State, rep.Format, rep.FilePath, time.Now().Unix(), replacedSngID)
+	return err
+}
+
 // Get returns a single item, or (nil, nil) if absent.
 func (s *Store) Get(ctx context.Context, sngID int64) (*Item, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT `+itemColumns+` FROM items WHERE sng_id = ?`, sngID)
