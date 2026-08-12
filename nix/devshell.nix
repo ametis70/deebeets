@@ -7,9 +7,9 @@ let
     go run . "$@"
   '';
 
-  # Start the daemon with a fixture album list and auto-download enabled.
+  # Start the daemon with a fixture album list.
   # Usage: deeznt-fixture [album_id ...]
-  # Then in another terminal: deeznt-sync, deeznt-dl, deeznt-import
+  # Then in another terminal: deeznt-sync, deeznt-dl, deeznt-tag, deeznt-convert
   fixture = pkgs.writeShellScriptBin "deeznt-fixture" ''
     if [[ $# -gt 0 ]]; then
       albums=$(IFS=,; echo "$*")
@@ -29,9 +29,14 @@ let
     go run . download start "$@"
   '';
 
-  # Trigger a full-library beets import in a running daemon.
-  import-cmd = pkgs.writeShellScriptBin "deeznt-import" ''
-    go run . beets import
+  # Trigger tagging in a running daemon.
+  tag-cmd = pkgs.writeShellScriptBin "deeznt-tag" ''
+    go run . tag start "$@"
+  '';
+
+  # Trigger conversion in a running daemon.
+  convert-cmd = pkgs.writeShellScriptBin "deeznt-convert" ''
+    go run . convert start "$@"
   '';
 
 in
@@ -40,11 +45,11 @@ pkgs.mkShell {
     go
     gopls
     gotools
-    beets
     run
     fixture
     sync-cmd
     dl
-    import-cmd
+    tag-cmd
+    convert-cmd
   ];
 }

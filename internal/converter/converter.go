@@ -1,5 +1,5 @@
 // Package converter runs ffmpeg on downloaded audio files to produce converted
-// copies with full multi-value tags written directly — no beets dependency.
+// copies with full multi-value tags.
 package converter
 
 import (

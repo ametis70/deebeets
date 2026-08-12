@@ -31,7 +31,7 @@ type FavItem struct {
 	Artist      string
 	Album       string
 	AlbumArtist string
-	GroupKey    string // album id — groups a release for beets import
+	GroupKey    string // album id — groups tracks of one release
 	SourceType  string // track|album|artist|playlist
 	SourceID    string
 }

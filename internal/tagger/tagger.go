@@ -1,6 +1,4 @@
-// Package tagger writes baseline tags to downloaded audio files and renders
-// their on-disk paths. beets remains the canonical tagger after import; these
-// tags just make files valid and Navidrome-readable beforehand.
+// Package tagger writes tags to audio files and renders their on-disk paths.
 package tagger
 
 import (
