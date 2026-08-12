@@ -68,6 +68,11 @@ func listSources(albums, artists, playlists bool, deezerStatus string) error {
 		return err
 	}
 
+	// Default to PRESENT only, same as tracks.
+	if deezerStatus == "" {
+		deezerStatus = store.DeezerStatusPresent
+	}
+
 	// Filter by deezer_status if specified (empty or "all" = no filter).
 	if deezerStatus != "" && strings.ToLower(deezerStatus) != "all" {
 		dsUpper := strings.ToUpper(deezerStatus)
