@@ -89,16 +89,30 @@ func listSources(albums, artists, playlists bool, deezerStatus string) error {
 		fmt.Println("no sources")
 		return nil
 	}
+	showExtra := strings.ToLower(deezerStatus) == "all" ||
+		strings.ToUpper(deezerStatus) == store.DeezerStatusReplaced ||
+		strings.ToUpper(deezerStatus) == store.DeezerStatusMissing
+
 	tw := tabwriter.NewWriter(cmdOut, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "KIND\tID\tSTATUS\tSTATE\tTRACKS\tREPLACED_BY\tARTIST\tNAME")
+	if showExtra {
+		fmt.Fprintln(tw, "KIND\tID\tSTATUS\tSTATE\tTRACKS\tREPLACED_BY\tARTIST\tNAME")
+	} else {
+		fmt.Fprintln(tw, "KIND\tID\tSTATE\tTRACKS\tARTIST\tNAME")
+	}
 	for _, s := range sources {
-		replBy := ""
-		if s.ReplacementID > 0 {
-			replBy = fmt.Sprintf("%d", s.ReplacementID)
+		if showExtra {
+			replBy := ""
+			if s.ReplacementID > 0 {
+				replBy = fmt.Sprintf("%d", s.ReplacementID)
+			}
+			fmt.Fprintf(tw, "%s\t%d\t%s\t%s\t%d\t%s\t%s\t%s\n",
+				s.Kind, s.ExtID, s.DeezerStatus, s.State, s.TrackCount,
+				replBy, trunc(s.Artist, 24), trunc(s.Name, 40))
+		} else {
+			fmt.Fprintf(tw, "%s\t%d\t%s\t%d\t%s\t%s\n",
+				s.Kind, s.ExtID, s.State, s.TrackCount,
+				trunc(s.Artist, 24), trunc(s.Name, 40))
 		}
-		fmt.Fprintf(tw, "%s\t%d\t%s\t%s\t%d\t%s\t%s\t%s\n",
-			s.Kind, s.ExtID, s.DeezerStatus, s.State, s.TrackCount,
-			replBy, trunc(s.Artist, 24), trunc(s.Name, 40))
 	}
 	tw.Flush()
 	return nil
