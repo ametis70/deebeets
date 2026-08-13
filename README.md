@@ -1,34 +1,45 @@
+<div align="center">
+
 # deeznt
 
-A headless Go daemon that syncs your **Deezer favorites**, downloads them as FLAC (or MP3), tags them with full metadata from the Deezer API, and optionally converts them to Opus for **Navidrome**.
+![license](https://img.shields.io/github/license/ametis70/deeznt?style=flat-square)
+![go](https://img.shields.io/badge/go-1.26-00ADD8?style=flat-square&logo=go&logoColor=white)
+![nix](https://img.shields.io/badge/nix-flake-5277C3?style=flat-square&logo=nixos&logoColor=white)
 
-State lives in SQLite and is the **source of truth**: removing a file from disk never deletes its record, and a correctly-downloaded track is not re-fetched unless you explicitly force it.
+deeznt syncs your **Deezer favorites**, downloads them as FLAC, tags them with full metadata, and optionally converts to Opus — ready for **Navidrome**
 
-> Personal-use tool for your own Deezer favorites. FLAC requires a Deezer HiFi subscription; deeznt falls back to MP3 automatically.
+</div>
 
----
+## What it does
 
-## Features
+- Syncs favorite **albums**, artists, playlists, and loved tracks from the Deezer API
+- Downloads audio in FLAC (or MP3) with full metadata: multi-value artist tags, lyrics, label, genre, ReplayGain, cover art, and artist images
+- Caches all track/album/lyrics metadata in SQLite at sync time — tagging requires no further API calls
+- Converts to **Opus** via ffmpeg with correct multi-value Vorbis comments written by `opustags`
+- Embeds synced lyrics in files and writes `.lrc` sidecar files
+- Detects **replaced** albums and tracks replacements without re-downloading already-present files
+- Rate-limit detection: backs off and hard-stops before Deezer bans the account
+- Sends **webhook notifications** for pipeline events with configurable auth headers
+- Full CLI to manage every stage: sync, download, tag, convert, retag, reconvert, blocklist, verify
 
-- Sync favorite **albums / artists / playlists / loved tracks** (any combination).
-- **Four-stage pipeline**: sync → download → tag → convert — each independently controllable with start/stop commands.
-- **Metadata cached at sync time**: full track data, lyrics, and album info are fetched from the Deezer API once during sync and stored in SQLite. Download is stream-only; tagging uses cached data — no redundant API calls.
-- **Retag without redownloading**: `deeznt retag --all` re-tags all files from the DB cache. Add a new tag field or fix a bug without touching the audio data.
-- **Synced lyrics** embedded in files (LRC format) and written as `.lrc` sidecar files.
-- **Multi-value artist tags** (`ARTISTS`, `ALBUMARTISTS`) for correct Navidrome display.
-- **Cover art** (album `cover.jpg`) and **artist images** (`folder.jpg`) fetched from CDN.
-- **Rate-limit detection**: backs off and hard-stops before Deezer bans the account.
-- **Batch retries**: failed downloads are retried as a group after the batch completes.
-- **Blocklist** by track/album/artist/playlist id.
-- Configurable **tags**, a Navidrome-friendly **naming template**, and a fully customisable **ffmpeg conversion command**.
-- **Webhook notifications** for pipeline events (downloads started/finished/failed, converts finished/failed).
-- Full **CLI** to manage every stage, inspect state, force redownloads/retags/reconverts.
+## Pipeline
 
----
+```
+sync → download → tag → convert
+```
+
+Each stage is independently controllable with `start`/`stop` commands. With `auto = true` in config they chain automatically.
+
+| Stage        | What it does                                                                                       |
+| ------------ | -------------------------------------------------------------------------------------------------- |
+| **sync**     | Fetches favorites from Deezer; caches `song.getData`, `song.getLyrics`, `album.getData` in SQLite  |
+| **download** | Streams and decrypts audio (Blowfish CBC-stripe) to disk; token refresh only, no metadata fetching |
+| **tag**      | Reads cached JSON from DB; writes FLAC/MP3 tags, cover art, artist images, `.lrc` files            |
+| **convert**  | Runs ffmpeg + opustags to produce correctly-tagged Opus files                                      |
 
 ## Install
 
-Requires Go 1.26+ and `ffmpeg` + `opustags` (for opus conversion and tagging).
+Requires Go 1.26+, `ffmpeg`, and `opustags`.
 
 ```sh
 go build -o deeznt .
@@ -38,191 +49,119 @@ Or with Docker:
 
 ```sh
 docker compose up --build -d
+docker compose exec -it deeznt deeznt login
+docker compose exec deeznt deeznt sync start
 ```
 
----
+## Configuration
 
-## Configure
-
-Copy the example and edit it:
+Copy the example and edit:
 
 ```sh
 cp config.example.toml config.toml
 ```
 
-Set your Deezer **ARL** cookie (find it in browser DevTools → Application → Cookies → `deezer.com`):
+Store your Deezer ARL cookie (find it in browser DevTools → Application → Cookies → `deezer.com`):
 
 ```sh
 deeznt login
 # or: export DEEZNT_ARL="your-arl-cookie"
 ```
 
-Any setting can be overridden via `DEEZNT_`-prefixed env vars, e.g. `DEEZNT_DOWNLOAD_CONCURRENCY=5`. See `config.example.toml` for all options and `deeznt config print` to view the resolved configuration.
+Any setting can be overridden via `DEEZNT_`-prefixed env vars. Key options:
 
----
+```toml
+[sync]
+interval = "6h"            # auto-sync interval; "0s" disables
+
+[download]
+auto = true                # chain download after sync
+
+[tag]
+auto = true                # chain tag after download
+
+[convert]
+enabled = true
+auto    = true
+dest    = "/music/ogg"
+format  = "opus"
+ffmpeg_args = "ffmpeg -i $source -y -vn -c:a libopus -b:a 160k -vbr on -compression_level 10 $dest"
+
+[notifications]
+webhook_url = "https://your-endpoint/hook"
+auth_header = "Authorization"
+auth_value  = ""           # prefer DEEZNT_WEBHOOK_AUTH_VALUE env var
+```
+
+See `config.example.toml` for all options and `deeznt config print` to view the resolved configuration.
 
 ## Usage
 
-Run the daemon (owns the pipeline and a Unix control socket):
-
 ```sh
+# Run the daemon
 deeznt daemon
-```
 
-Everything else is a thin client that talks to the daemon:
+# Sync favorites, then download → tag → convert automatically
+deeznt sync start
 
-```sh
-# Sync favorites — fetches and caches full metadata from Deezer
-deeznt sync start --albums --tracks
-deeznt sync start --refresh   # re-fetch metadata for already-known tracks
-
-# Download queued tracks (stream-only, no API calls except token refresh)
+# Manual per-stage control
 deeznt download start
-deeznt download stop           # abort after current batch
-
-# Tag downloaded files from cached metadata (no Deezer API calls)
+deeznt download stop
 deeznt tag start
-deeznt tag stop
-
-# Convert tagged files via ffmpeg
 deeznt convert start
-deeznt convert stop
 
 # Inspect
 deeznt status
-deeznt list                    # all tracks
-deeznt list --albums           # album sources with state/track counts
-deeznt list --state downloaded # filter by state
-
-# Download specific ids
-deeznt download start 302127 --type album
-deeznt download start 3135556 --type track
+deeznt list                            # PRESENT tracks only
+deeznt list --deezer-status replaced   # replaced tracks
+deeznt list --albums                   # album sources
+deeznt list --albums --deezer-status all
 
 # Force re-operations
-deeznt redownload --failed     # retry failed downloads
-deeznt redownload --missing    # re-download files missing from disk
-deeznt redownload --all        # re-download everything (quality upgrade)
-deeznt retag --all             # retag all files from cached DB metadata
-deeznt retag --failed          # retry failed tags
-deeznt reconvert --all         # reconvert all files
-deeznt reconvert --failed      # retry failed conversions
+deeznt redownload --failed
+deeznt redownload --all
+deeznt retag --all
+deeznt reconvert --all
 
 # Blocklist
 deeznt blocklist add 12345 --type artist --reason "not interested"
-deeznt blocklist list
 
 # Verify files on disk
 deeznt verify
+
+# Test webhook
+deeznt notify test
 ```
 
-`status`, `list`, and `verify` read the SQLite database directly, so they work even when the daemon is stopped.
+`status`, `list`, and `verify` read the SQLite database directly and work without the daemon running.
 
----
-
-## How it works
-
-### Pipeline stages
+## State machine
 
 ```
-sync → download → tag → convert
+waiting → queued → downloading → downloaded → tagging → tagged → converting → converted
+                                                                              (terminal)
 ```
 
-Each stage is independently controllable. With `auto = true` in config, they chain automatically.
+Failure states: `failed_download`, `failed_tag`, `failed_convert`.
 
-**1. Sync** (`deeznt sync start`)
-
-Enumerates your Deezer favorites. For each track:
-- Calls `song.getData` — stores full JSON (contributors, lyrics ID, gain, etc.) in `items.track_data`
-- Calls `song.getLyrics` if available — stores JSON in `items.lyrics_data`
-- Calls `album.getData` once per album — stores JSON in `album_cache`
-
-Re-syncing refreshes metadata. `--refresh` forces re-fetch for existing items.
-
-**2. Download** (`deeznt download start`)
-
-For each queued track:
-- Calls `song.getData` for a fresh `TRACK_TOKEN` (tokens expire ~1h), updates the cache
-- Calls `media.deezer.com` to resolve the CDN URL
-- Streams and decrypts (Blowfish CBC-stripe) directly to disk
-- Sets state → `downloaded`
-
-**3. Tag** (`deeznt tag start`)
-
-For each downloaded track — **no API calls**:
-- Reads `track_data`, `lyrics_data` from DB; reads album data from `album_cache`
-- Builds full metadata: multi-value `ARTISTS`/`ALBUMARTISTS`, label, genre, replaygain, ISRC, copyright, LRC lyrics
-- Fetches cover art and artist image from CDN using hashes stored in `track_data`
-- Writes tags to the audio file
-- Writes `cover.jpg` and `folder.jpg`
-- Writes `.lrc` sidecar file
-- Sets state → `tagged` (or → `converted` if no converter configured)
-
-**4. Convert** (`deeznt convert start`, optional)
-
-For each tagged track:
-- Runs the configured `ffmpeg_args` command (`$source` → `$dest`)
-- Writes full multi-value tags to the converted file using `opustags`
-- Sets state → `converted`
-
-### State machine
-
-```
-waiting
-  ↓ sync
-queued
-  ↓ download stage
-downloading → failed_download
-  ↓
-downloaded
-  ↓ tag stage
-tagging → failed_tag
-  ↓
-tagged
-  ↓ convert stage (if enabled)
-converting → failed_convert
-  ↓
-converted  ← terminal success
-```
-
-Plus `blocklisted`, `skipped`.
-
----
-
-## Docker
-
-```sh
-# Start the stack (deeznt + Navidrome)
-docker compose up --build -d
-
-# First-time login (stores ARL encrypted in the DB)
-docker compose exec -it deeznt deeznt login
-
-# Trigger the first sync
-docker compose exec deeznt deeznt sync start
-
-# Open Navidrome at http://localhost:4533
-```
-
-The Docker config in `config.docker.toml` has `download.auto`, `tag.auto`, and `convert.auto` all set to `true`, so a single `sync start` chains the full pipeline automatically.
-
-FLACs land in `/music/flac`; converted opus files land in `/music/ogg`. Navidrome scans both.
-
----
+REPLACED tracks (Deezer STATUS=3) are stored with `deezer_status=REPLACED` and never downloaded — only their replacements are queued. Re-syncing mirrors the replacement's state back to the original.
 
 ## Development
 
 ```sh
-# Normal tests (no external tools needed)
+# Enter the dev shell
+nix develop
+
+# Run tests
 go test ./...
-go vet ./...
 
 # Integration tests (require DEEZER_ARL, opustags, ffmpeg)
 DEEZER_ARL=<arl> go test -tags integration ./internal/deezer/ -v
 go test -tags integration ./internal/tagger/ -v
 ```
 
----
+The `internal/pipeline_test/` package contains full sync→download→tag integration tests using a mock Deezer HTTP server — no real API calls needed.
 
 ## Acknowledgements
 
-Deezer gateway/decryption behaviour modelled on [deemix](https://github.com/bambanah/deemix).
+Deezer gateway/decryption behaviour modelled on [deemix](https://github.com/bambanah/deemix). See [docs/deezer-api.md](docs/deezer-api.md) for the reverse-engineered API reference.
