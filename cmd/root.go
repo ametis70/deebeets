@@ -55,6 +55,7 @@ func rootCmd() *cobra.Command {
 		downloadCmd(),
 		redownloadCmd(),
 		blocklistCmd(),
+		notifyCmd(),
 		convertCmd(),
 		reconvertCmd(),
 		retagCmd(),

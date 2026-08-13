@@ -111,7 +111,14 @@ type Convert struct {
 // Notifications controls webhook notifications for pipeline events.
 type Notifications struct {
 	// WebhookURL is the endpoint to POST events to. Empty disables notifications.
+	// Override via DEEZNT_WEBHOOK_URL env var.
 	WebhookURL string `koanf:"webhook_url"`
+	// AuthHeader is the HTTP header name for authentication, e.g. "Authorization".
+	// Override via DEEZNT_WEBHOOK_AUTH_HEADER env var.
+	AuthHeader string `koanf:"auth_header"`
+	// AuthValue is the value sent in the auth header, e.g. "Bearer token123".
+	// Override via DEEZNT_WEBHOOK_AUTH_VALUE env var (preferred for secrets).
+	AuthValue string `koanf:"auth_value"`
 	// On controls which events trigger a notification.
 	On NotificationEvents `koanf:"on"`
 }
@@ -146,6 +153,9 @@ const (
 	EnvPrefix        = "DEEZNT_"
 	EnvARL           = "DEEZNT_ARL"
 	EnvFixtureAlbums = "DEEZNT_FIXTURE_ALBUMS"
+	EnvWebhookURL    = "DEEZNT_WEBHOOK_URL"
+	EnvWebhookHeader = "DEEZNT_WEBHOOK_AUTH_HEADER"
+	EnvWebhookValue  = "DEEZNT_WEBHOOK_AUTH_VALUE"
 )
 
 // Defaults returns the built-in configuration.
@@ -183,6 +193,8 @@ func Defaults() map[string]any {
 		"convert.ffmpeg_args": "ffmpeg -i $source -y -vn -c:a libopus -b:a 160k -vbr on -compression_level 10 $dest",
 
 		"notifications.webhook_url":           "",
+		"notifications.auth_header":            "",
+		"notifications.auth_value":             "",
 		"notifications.on.downloads_started":  false,
 		"notifications.on.downloads_finished": true,
 		"notifications.on.downloads_failed":   true,
@@ -261,6 +273,17 @@ func Load(path string) (*Config, error) {
 			}
 			cfg.FixtureAlbums = append(cfg.FixtureAlbums, id)
 		}
+	}
+
+	// Dedicated webhook env vars — these take precedence over config file values.
+	if v := os.Getenv(EnvWebhookURL); v != "" {
+		cfg.Notifications.WebhookURL = v
+	}
+	if v := os.Getenv(EnvWebhookHeader); v != "" {
+		cfg.Notifications.AuthHeader = v
+	}
+	if v := os.Getenv(EnvWebhookValue); v != "" {
+		cfg.Notifications.AuthValue = v
 	}
 
 	if err := cfg.Validate(); err != nil {

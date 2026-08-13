@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -20,6 +21,7 @@ const (
 	EventDownloadsFailed   = "downloads_failed"
 	EventConvertsFinished  = "converts_finished"
 	EventConvertsFailed    = "converts_failed"
+	EventTest              = "test"
 )
 
 // Payload is the JSON body sent to the webhook.
@@ -39,10 +41,16 @@ type Notifier struct {
 // New creates a Notifier. If webhook_url is empty all Send calls are no-ops.
 func New(cfg config.Notifications, log *slog.Logger) *Notifier {
 	return &Notifier{
-		cfg: cfg,
-		log: log,
+		cfg:    cfg,
+		log:    log,
 		client: &http.Client{Timeout: 10 * time.Second},
 	}
+}
+
+// NewSilent creates a Notifier that discards all log output.
+// Used by CLI commands where errors are reported directly to stdout.
+func NewSilent(cfg config.Notifications) *Notifier {
+	return New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
 // Enabled reports whether notifications are configured.
@@ -51,8 +59,8 @@ func (n *Notifier) Enabled() bool {
 }
 
 // Send fires a webhook for the given event if that event is enabled.
-// It is non-blocking — the POST happens in a goroutine so it never delays
-// the pipeline.
+// Non-blocking — the POST happens in a goroutine so it never delays the pipeline.
+// Failures are logged at Error level.
 func (n *Notifier) Send(event string, data map[string]any) {
 	if !n.Enabled() || !n.eventEnabled(event) {
 		return
@@ -64,11 +72,28 @@ func (n *Notifier) Send(event string, data map[string]any) {
 	}
 	go func() {
 		if err := n.post(context.Background(), p); err != nil {
-			n.log.Warn("webhook notification failed", "event", event, "err", err)
+			n.log.Error("webhook notification failed",
+				"event", event,
+				"url", n.cfg.WebhookURL,
+				"err", err)
 		} else {
 			n.log.Debug("webhook notification sent", "event", event)
 		}
 	}()
+}
+
+// SendTest sends a test notification synchronously and returns any error.
+// Used by `deeznt notify test` to verify the webhook is reachable.
+func (n *Notifier) SendTest(ctx context.Context) error {
+	if !n.Enabled() {
+		return fmt.Errorf("notifications not configured (webhook_url is empty)")
+	}
+	p := Payload{
+		Event:     EventTest,
+		Timestamp: time.Now().Format(time.RFC3339),
+		Data:      map[string]any{"message": "deeznt webhook test"},
+	}
+	return n.post(ctx, p)
 }
 
 func (n *Notifier) post(ctx context.Context, p Payload) error {
@@ -82,14 +107,17 @@ func (n *Notifier) post(ctx context.Context, p Payload) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "deeznt-notify/1.0")
+	if n.cfg.AuthHeader != "" {
+		req.Header.Set(n.cfg.AuthHeader, n.cfg.AuthValue)
+	}
 
 	resp, err := n.client.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("POST %s: %w", n.cfg.WebhookURL, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("webhook returned %d", resp.StatusCode)
+		return fmt.Errorf("POST %s: server returned %d", n.cfg.WebhookURL, resp.StatusCode)
 	}
 	return nil
 }
