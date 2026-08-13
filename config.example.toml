@@ -4,10 +4,8 @@
 # Prefer the dedicated DEEZNT_ARL env var over putting the ARL in this file.
 
 [deezer]
-# Your Deezer ARL cookie. Leave empty and export DEEZNT_ARL instead.
-arl = ""
-# Formats tried in order; first one the account/track can serve wins.
-# FLAC requires a Deezer HiFi subscription.
+# Store your ARL via `deeznt login` — never put it in this file.
+# The login command encrypts it in the database.
 format_priority = ["FLAC", "MP3_320", "MP3_128"]
 
 [paths]

@@ -2,7 +2,7 @@
 # Paths are pinned to the container volume mounts defined in docker-compose.yml.
 
 [deezer]
-arl = ""  # overridden by DEEZNT_ARL env var at runtime
+# Store your ARL via `deeznt login` — never put it in this file.
 format_priority = ["FLAC", "MP3_320", "MP3_128"]
 
 [paths]

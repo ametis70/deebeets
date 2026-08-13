@@ -39,7 +39,9 @@ type Config struct {
 
 // Deezer holds credentials and format preferences.
 type Deezer struct {
-	ARL            string   `koanf:"arl"`
+	// ARL is only read from the dedicated DEEZNT_ARL env var or the encrypted
+	// DB entry written by `deeznt login`. It must never appear in config files.
+	ARL            string   `koanf:"-"`
 	FormatPriority []string `koanf:"format_priority"`
 }
 
@@ -161,7 +163,6 @@ const (
 // Defaults returns the built-in configuration.
 func Defaults() map[string]any {
 	return map[string]any{
-		"deezer.arl":             "",
 		"deezer.format_priority": []string{"FLAC", "MP3_320", "MP3_128"},
 
 		"paths.music_dir":   "./music",
