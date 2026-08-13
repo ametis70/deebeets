@@ -1,6 +1,7 @@
 package deezer
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
 )
@@ -34,6 +35,25 @@ func formatCode(name string) (int, bool) {
 	default:
 		return 0, false
 	}
+}
+
+// ContributorsMap is a map[string][]string that gracefully handles the Deezer
+// API returning either an object {"main_artist":["X"]} or an empty array []
+// when a track has no contributor metadata.
+type ContributorsMap map[string][]string
+
+func (c *ContributorsMap) UnmarshalJSON(data []byte) error {
+	// Empty array [] — treat as empty map.
+	if len(data) > 0 && data[0] == '[' {
+		*c = ContributorsMap{}
+		return nil
+	}
+	var m map[string][]string
+	if err := json.Unmarshal(data, &m); err != nil {
+		return err
+	}
+	*c = m
+	return nil
 }
 
 // GWArtist is an artist entry inside a GWTrack's ARTISTS array.
@@ -71,11 +91,11 @@ type GWTrack struct {
 	DigitalReleaseDate  string              `json:"DIGITAL_RELEASE_DATE"`
 	Copyright           string              `json:"COPYRIGHT"`
 	// Status reflects track availability: 1=present, 3=replaced, others=missing.
-	Status              int                 `json:"STATUS"`
+	Status       int          `json:"STATUS"`
 	// Contributors maps contributor role → list of artist names.
-	// Known roles: "main_artist", "featuring", "author", "composer", "conductor", etc.
-	Contributors        map[string][]string `json:"SNG_CONTRIBUTORS"`
-	Fallback            *GWTrack            `json:"FALLBACK"`
+	// The API returns {} when populated and [] when empty — ContributorsMap handles both.
+	Contributors ContributorsMap `json:"SNG_CONTRIBUTORS"`
+	Fallback     *GWTrack        `json:"FALLBACK"`
 }
 
 // MainArtistPicture returns the ART_PICTURE hash of the primary (ROLE_ID "0") artist,
