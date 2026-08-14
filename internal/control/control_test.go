@@ -43,6 +43,7 @@ func (f *fakeController) Retag(_ context.Context, mode string) (int, error) {
 	return 3, nil
 }
 func (f *fakeController) ConvertStart(context.Context) error { f.convertStarted = true; return nil }
+func (f *fakeController) ConvertStop(context.Context) error  { return nil }
 func (f *fakeController) Reconvert(_ context.Context, mode string) (int, error) {
 	f.lastMode = mode
 	return 3, nil

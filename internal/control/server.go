@@ -49,6 +49,7 @@ func (s *Server) Listen() error {
 	mux.HandleFunc("POST /blocklist", s.handleBlocklistAdd)
 	mux.HandleFunc("DELETE /blocklist", s.handleBlocklistRemove)
 	mux.HandleFunc("POST /convert/start", s.handleConvertStart)
+	mux.HandleFunc("POST /convert/stop", s.handleConvertStop)
 	mux.HandleFunc("POST /reconvert", s.handleReconvert)
 	mux.HandleFunc("GET /items", s.handleItems)
 	mux.HandleFunc("GET /sources", s.handleSources)
@@ -242,6 +243,14 @@ func (s *Server) handleConvertStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, APIResponse{OK: true, Message: "convert started"})
+}
+
+func (s *Server) handleConvertStop(w http.ResponseWriter, r *http.Request) {
+	if err := s.ctrl.ConvertStop(r.Context()); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, APIResponse{OK: true, Message: "convert stopped"})
 }
 
 func (s *Server) handleReconvert(w http.ResponseWriter, r *http.Request) {

@@ -23,13 +23,14 @@ import (
 type orchCmd int
 
 const (
-	orchSync     orchCmd = iota // run sync immediately
-	orchDownload                // run download immediately
-	orchTag                     // run tag immediately
-	orchConvert                 // run convert immediately
-	orchStop                    // stop the active download run
-	orchSyncStop                // stop an in-progress sync
-	orchTagStop                 // stop the active tag run
+	orchSync        orchCmd = iota // run sync immediately
+	orchDownload                   // run download immediately
+	orchTag                        // run tag immediately
+	orchConvert                    // run convert immediately
+	orchStop                       // stop the active download run
+	orchSyncStop                   // stop an in-progress sync
+	orchTagStop                    // stop the active tag run
+	orchConvertStop                // stop the active convert run
 )
 
 const metaCurrentStage = "current_stage"
@@ -45,10 +46,11 @@ type Daemon struct {
 	notifier *notify.Notifier
 	srv      *control.Server
 
-	orchCh      chan orchCmd
-	stopDLCh    chan struct{} // closed to signal download abort
-	stopTagCh   chan struct{} // closed to signal tag abort
-	syncRefresh bool         // set by sync start --refresh
+	orchCh         chan orchCmd
+	stopDLCh       chan struct{} // closed to signal download abort
+	stopTagCh      chan struct{} // closed to signal tag abort
+	stopConvertCh  chan struct{} // closed to signal convert abort
+	syncRefresh    bool
 	ctx         context.Context
 	cancel      context.CancelFunc
 }
@@ -65,9 +67,10 @@ func New(cfg *config.Config, log *slog.Logger) (*Daemon, error) {
 		log:       log,
 		store:     st,
 		notifier:  notify.New(cfg.Notifications, log),
-		orchCh:    make(chan orchCmd, 4),
-		stopDLCh:  make(chan struct{}),
-		stopTagCh: make(chan struct{}),
+		orchCh:        make(chan orchCmd, 4),
+		stopDLCh:      make(chan struct{}),
+		stopTagCh:     make(chan struct{}),
+		stopConvertCh: make(chan struct{}),
 	}
 	d.srv = control.NewServer(d, cfg.Paths.SocketPath)
 	return d, nil
@@ -234,7 +237,7 @@ func (d *Daemon) handleOrchCmd(ctx context.Context, cmd orchCmd) {
 		}
 	case orchConvert:
 		d.runConvert(ctx)
-	case orchStop, orchSyncStop, orchTagStop:
+	case orchStop, orchSyncStop, orchTagStop, orchConvertStop:
 		// handled via stop channels / no-op
 	}
 }
@@ -388,7 +391,21 @@ func (d *Daemon) runConvert(ctx context.Context) {
 		return
 	}
 	_ = d.store.SetMeta(ctx, metaCurrentStage, store.StageImporting)
-	res, err := d.pipe.RunConvert(ctx)
+
+	convCtx, convCancel := context.WithCancel(ctx)
+	defer convCancel()
+
+	stopCh := make(chan struct{})
+	d.stopConvertCh = stopCh
+	go func() {
+		select {
+		case <-stopCh:
+			convCancel()
+		case <-convCtx.Done():
+		}
+	}()
+
+	res, err := d.pipe.RunConvert(convCtx)
 	if err != nil {
 		d.log.Error("convert run error", "err", err)
 	}

@@ -154,6 +154,11 @@ func (c *Client) ConvertStart(ctx context.Context) error {
 	return c.do(ctx, http.MethodPost, "/convert/start", nil, nil)
 }
 
+// ConvertStop aborts the active convert run.
+func (c *Client) ConvertStop(ctx context.Context) error {
+	return c.do(ctx, http.MethodPost, "/convert/stop", nil, nil)
+}
+
 // Reconvert forces reconversion by mode ("all" or "failed").
 func (c *Client) Reconvert(ctx context.Context, mode string) (int, error) {
 	var out CountResponse

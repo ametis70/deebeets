@@ -11,7 +11,7 @@ func convertCmd() *cobra.Command {
 		Use:   "convert",
 		Short: "Manage the ffmpeg conversion stage",
 	}
-	c.AddCommand(convertStartCmd())
+	c.AddCommand(convertStartCmd(), convertStopCmd())
 	return c
 }
 
@@ -28,6 +28,24 @@ func convertStartCmd() *cobra.Command {
 				return err
 			}
 			fmt.Println("convert started")
+			return nil
+		},
+	}
+}
+
+func convertStopCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "stop",
+		Short: "Abort the active convert run",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, err := requireClient()
+			if err != nil {
+				return err
+			}
+			if err := client.ConvertStop(ctx()); err != nil {
+				return err
+			}
+			fmt.Println("convert stop signal sent")
 			return nil
 		},
 	}

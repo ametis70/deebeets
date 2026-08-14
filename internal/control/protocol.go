@@ -38,6 +38,8 @@ type Controller interface {
 
 	// ConvertStart triggers a manual convert run (pending/missing files only).
 	ConvertStart(ctx context.Context) error
+	// ConvertStop aborts the active convert run.
+	ConvertStop(ctx context.Context) error
 	// Reconvert forces reconversion. Mode: "all" deletes existing converted
 	// files and reconverts everything; "failed" retries state=downloaded items.
 	Reconvert(ctx context.Context, mode string) (int, error)

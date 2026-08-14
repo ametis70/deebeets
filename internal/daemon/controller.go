@@ -157,6 +157,16 @@ func (d *Daemon) ConvertStart(ctx context.Context) error {
 	}
 }
 
+// ConvertStop aborts the active convert run.
+func (d *Daemon) ConvertStop(ctx context.Context) error {
+	select {
+	case <-d.stopConvertCh:
+	default:
+		close(d.stopConvertCh)
+	}
+	return nil
+}
+
 // Reconvert forces reconversion by mode ("all" or "failed").
 func (d *Daemon) Reconvert(ctx context.Context, mode string) (int, error) {
 	if d.pipe == nil {
