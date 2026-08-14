@@ -172,17 +172,17 @@ func (d *Daemon) orchestrate(ctx context.Context) {
 			d.runTag(ctx)
 		}
 		if d.cfg.Convert.Auto {
-			d.runConvert(ctx)
+			go d.runConvert(ctx)
 		}
 	case store.StageTagging:
 		d.log.Info("resuming interrupted tag run")
 		d.runTag(ctx)
 		if d.cfg.Convert.Auto {
-			d.runConvert(ctx)
+			go d.runConvert(ctx)
 		}
 	case store.StageConverting, store.StageImporting:
 		d.log.Info("resuming interrupted convert run")
-		d.runConvert(ctx)
+		go d.runConvert(ctx)
 	}
 
 	for {
@@ -228,15 +228,15 @@ func (d *Daemon) handleOrchCmd(ctx context.Context, cmd orchCmd) {
 			d.runTag(ctx)
 		}
 		if d.cfg.Convert.Auto {
-			d.runConvert(ctx)
+			go d.runConvert(ctx)
 		}
 	case orchTag:
 		d.runTag(ctx)
 		if d.cfg.Convert.Auto {
-			d.runConvert(ctx)
+			go d.runConvert(ctx)
 		}
 	case orchConvert:
-		d.runConvert(ctx)
+		go d.runConvert(ctx)
 	case orchStop, orchSyncStop, orchTagStop, orchConvertStop:
 		// handled via stop channels / no-op
 	}
@@ -254,7 +254,7 @@ func (d *Daemon) runSyncThenDownload(ctx context.Context) {
 		d.runTag(ctx)
 	}
 	if d.cfg.Convert.Auto {
-		d.runConvert(ctx)
+		go d.runConvert(ctx)
 	}
 }
 
