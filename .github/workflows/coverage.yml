@@ -1,0 +1,39 @@
+name: Coverage
+
+on:
+  push:
+    branches: [main]
+
+env:
+  GIST_ID: ""  # set to your gist ID to enable badge publishing
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install opustags and ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg opustags
+
+      - name: Run tests
+        run: |
+          go test -v -coverprofile=coverage.out -covermode=atomic ./... | tee test.out
+          go tool cover -func=coverage.out \
+            | grep -v -E 'cmd/|internal/pipeline_test/' \
+            | awk '/^[^t]/ { match($3,/([0-9.]+)%/,p); n+=1; s+=p[1] } END { printf "total:\t\t\t\t\t\t\t\t\t\t\t\t%.1f%%\n", s/n }' \
+            >> test.out
+
+      - name: Upload badges to Gist
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.GIST_ID != ''
+        uses: gaelgirodon/ci-badges-action@v1
+        with:
+          gist-id: ${{ env.GIST_ID }}
+          token: ${{ secrets.GIST_TOKEN }}
