@@ -165,7 +165,7 @@ func (s *Store) List(ctx context.Context, states []string, limit int) ([]*Item, 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 	var out []*Item
 	for rows.Next() {
 		it, err := scanItem(rows)
@@ -184,7 +184,7 @@ func (s *Store) CountByDeezerStatus(ctx context.Context) (map[string]int, error)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 	out := map[string]int{}
 	for rows.Next() {
 		var st string
@@ -219,7 +219,7 @@ func (s *Store) ListByDeezerStatus(ctx context.Context, deezerStatus string, sta
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 	var out []*Item
 	for rows.Next() {
 		it, err := scanItem(rows)
@@ -241,7 +241,7 @@ func (s *Store) CountByState(ctx context.Context) (map[string]int, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 	out := map[string]int{}
 	for rows.Next() {
 		var st string
@@ -405,7 +405,7 @@ func (s *Store) ClaimFailedBatch(ctx context.Context) ([]*Item, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 	var out []*Item
 	for rows.Next() {
 		it, err := scanItem(rows)
@@ -609,7 +609,7 @@ func (s *Store) CountFailedByStage(ctx context.Context) (map[string]int, error) 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 	out := map[string]int{}
 	for rows.Next() {
 		var state string

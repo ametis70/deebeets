@@ -88,12 +88,12 @@ func blocklistListCmd() *cobra.Command {
 				return nil
 			}
 			tw := tabwriter.NewWriter(cmdOut, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "KIND\tID\tREASON\tADDED")
+			fmt.Fprintln(tw, "KIND\tID\tREASON\tADDED") //nolint:errcheck
 			for _, b := range blocks {
-				fmt.Fprintf(tw, "%s\t%d\t%s\t%s\n", b.Kind, b.ExtID, b.Reason,
+				_, _ = fmt.Fprintf(tw, "%s\t%d\t%s\t%s\n", b.Kind, b.ExtID, b.Reason,
 					time.Unix(b.CreatedAt, 0).Format("2006-01-02"))
 			}
-			tw.Flush()
+			tw.Flush() //nolint:errcheck
 			return nil
 		},
 	}

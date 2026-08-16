@@ -66,12 +66,12 @@ If ARL is not supplied as an argument, it is read interactively without echo.`,
 			if err != nil {
 				return err
 			}
-			defer st.Close()
+			defer st.Close() //nolint:errcheck
 
 			if err := credentials.SetARL(context.Background(), st, arl); err != nil {
 				return fmt.Errorf("save ARL: %w", err)
 			}
-			fmt.Fprintln(cmdOut, "ARL saved (encrypted)")
+			fmt.Fprintln(cmdOut, "ARL saved (encrypted)") //nolint:errcheck
 			return nil
 		},
 	}

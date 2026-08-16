@@ -507,19 +507,6 @@ func toDiscoveredWithMeta(fi deezer.FavItem, trackData, lyricsData string) store
 	return d
 }
 
-func trackToDiscovered(t *deezer.GWTrack, sourceType, sourceID string) store.Discovered {
-	return store.Discovered{
-		SngID:       t.ID(),
-		Title:       t.SngTitle,
-		Artist:      t.ArtName,
-		Album:       t.AlbTitle,
-		AlbumArtist: t.ArtName,
-		GroupKey:    t.AlbID,
-		SourceType:  sourceType,
-		SourceID:    sourceID,
-	}
-}
-
 func trackGWToFav(t *deezer.GWTrack, sourceType, sourceID string) deezer.FavItem {
 	return deezer.FavItem{
 		SngID:       t.ID(),

@@ -95,9 +95,9 @@ func listSources(albums, artists, playlists bool, deezerStatus string) error {
 
 	tw := tabwriter.NewWriter(cmdOut, 0, 0, 2, ' ', 0)
 	if showExtra {
-		fmt.Fprintln(tw, "KIND\tID\tSTATUS\tSTATE\tTRACKS\tREPLACED_BY\tARTIST\tNAME")
+		fmt.Fprintln(tw, "KIND\tID\tSTATUS\tSTATE\tTRACKS\tREPLACED_BY\tARTIST\tNAME") //nolint:errcheck
 	} else {
-		fmt.Fprintln(tw, "KIND\tID\tSTATE\tTRACKS\tARTIST\tNAME")
+		fmt.Fprintln(tw, "KIND\tID\tSTATE\tTRACKS\tARTIST\tNAME") //nolint:errcheck
 	}
 	for _, s := range sources {
 		if showExtra {
@@ -105,16 +105,16 @@ func listSources(albums, artists, playlists bool, deezerStatus string) error {
 			if s.ReplacementID > 0 {
 				replBy = fmt.Sprintf("%d", s.ReplacementID)
 			}
-			fmt.Fprintf(tw, "%s\t%d\t%s\t%s\t%d\t%s\t%s\t%s\n",
-				s.Kind, s.ExtID, s.DeezerStatus, s.State, s.TrackCount,
-				replBy, trunc(s.Artist, 24), trunc(s.Name, 40))
+		_, _ = fmt.Fprintf(tw, "%s\t%d\t%s\t%s\t%d\t%s\t%s\t%s\n",
+			s.Kind, s.ExtID, s.DeezerStatus, s.State, s.TrackCount,
+			replBy, trunc(s.Artist, 24), trunc(s.Name, 40))
 		} else {
-			fmt.Fprintf(tw, "%s\t%d\t%s\t%d\t%s\t%s\n",
-				s.Kind, s.ExtID, s.State, s.TrackCount,
-				trunc(s.Artist, 24), trunc(s.Name, 40))
+			_, _ = fmt.Fprintf(tw, "%s\t%d\t%s\t%d\t%s\t%s\n",
+			s.Kind, s.ExtID, s.State, s.TrackCount,
+			trunc(s.Artist, 24), trunc(s.Name, 40))
 		}
 	}
-	tw.Flush()
+	tw.Flush() //nolint:errcheck
 	return nil
 }
 
@@ -155,9 +155,9 @@ func listTracks(states []string, limit int, sourceKindFilter []string, deezerSta
 	tw := tabwriter.NewWriter(cmdOut, 0, 0, 2, ' ', 0)
 	showReplaced := deezerStatus == "" || strings.ToUpper(deezerStatus) == store.DeezerStatusReplaced
 	if showReplaced {
-		fmt.Fprintln(tw, "SNG_ID\tSTATUS\tSTATE\tARTIST\tTITLE\tFORMAT\tREPLACED_BY\tERROR")
+		fmt.Fprintln(tw, "SNG_ID\tSTATUS\tSTATE\tARTIST\tTITLE\tFORMAT\tREPLACED_BY\tERROR") //nolint:errcheck
 	} else {
-		fmt.Fprintln(tw, "SNG_ID\tSTATE\tARTIST\tTITLE\tFORMAT\tERROR")
+		fmt.Fprintln(tw, "SNG_ID\tSTATE\tARTIST\tTITLE\tFORMAT\tERROR") //nolint:errcheck
 	}
 	for _, it := range items {
 		if showReplaced {
@@ -165,17 +165,17 @@ func listTracks(states []string, limit int, sourceKindFilter []string, deezerSta
 			if it.ReplacementID > 0 {
 				replBy = fmt.Sprintf("%d", it.ReplacementID)
 			}
-			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			_, _ = fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 				it.SngID, it.DeezerStatus, it.State,
 				trunc(it.Artist, 24), trunc(it.Title, 32),
 				it.Format, replBy, trunc(it.Error, 40))
 		} else {
-			fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\n",
+			_, _ = fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\n",
 				it.SngID, it.State, trunc(it.Artist, 24), trunc(it.Title, 32),
 				it.Format, trunc(it.Error, 40))
 		}
 	}
-	tw.Flush()
+	tw.Flush() //nolint:errcheck
 	return nil
 }
 
@@ -195,7 +195,7 @@ func fetchItems(states []string, limit int, deezerStatus string) ([]store.Item, 
 	if err != nil {
 		return nil, err
 	}
-	defer s.Close()
+	defer s.Close() //nolint:errcheck
 	var ptrs []*store.Item
 	if deezerStatus != "" {
 		ptrs, err = s.ListByDeezerStatus(ctx(), deezerStatus, states, limit)
@@ -228,7 +228,7 @@ func fetchSources(kinds []string) ([]store.Source, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer s.Close()
+	defer s.Close() //nolint:errcheck
 	ptrs, err := s.ListSources(ctx(), kinds)
 	if err != nil {
 		return nil, err

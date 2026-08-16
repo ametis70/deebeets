@@ -83,7 +83,7 @@ func (s *Store) CountSourcesByDeezerStatus(ctx context.Context, kind string) (ma
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 	out := map[string]int{}
 	for rows.Next() {
 		var st string
@@ -144,7 +144,7 @@ func (s *Store) ListSources(ctx context.Context, kinds []string) ([]*Source, err
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 	var out []*Source
 	for rows.Next() {
 		src, err := scanSource(rows)
@@ -163,7 +163,7 @@ func (s *Store) ListSourcesByState(ctx context.Context, state string) ([]*Source
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 	var out []*Source
 	for rows.Next() {
 		src, err := scanSource(rows)

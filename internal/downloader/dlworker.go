@@ -85,7 +85,7 @@ func (p *Pipeline) streamToTemp(ctx context.Context, sngID int64, url string) (s
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("unexpected status %d", resp.StatusCode)

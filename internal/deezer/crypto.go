@@ -9,7 +9,7 @@ import (
 	"io"
 	"strconv"
 
-	"golang.org/x/crypto/blowfish"
+	"golang.org/x/crypto/blowfish" //nolint:staticcheck // Deezer protocol requires Blowfish
 )
 
 // Deezer's fixed secrets (public knowledge, identical across all clients).

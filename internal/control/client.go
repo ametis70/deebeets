@@ -41,7 +41,7 @@ func (c *Client) Available() bool {
 	if err != nil {
 		return false
 	}
-	conn.Close()
+	_ = conn.Close()
 	return true
 }
 
@@ -66,7 +66,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	if err != nil {
 		return fmt.Errorf("daemon not reachable at %s: %w", c.socketPath, err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode >= 400 {
 		var apiErr APIResponse

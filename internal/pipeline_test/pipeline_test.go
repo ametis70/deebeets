@@ -176,7 +176,7 @@ func newHarness(t *testing.T) *testHarness {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { st.Close() }) //nolint:errcheck
 
 	cfg, err := config.Load("")
 	if err != nil {
@@ -645,6 +645,3 @@ func TestClaimDownloadSkipsReplaced(t *testing.T) {
 
 // helpers
 
-type nopCloser struct{ io.Reader }
-
-func (nopCloser) Close() error { return nil }

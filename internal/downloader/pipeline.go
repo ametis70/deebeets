@@ -536,7 +536,7 @@ func extractAlbIDFromTrackData(trackData string) int64 {
 		return 0
 	}
 	var id int64
-	fmt.Sscanf(v.AlbID, "%d", &id)
+	_, _ = fmt.Sscanf(v.AlbID, "%d", &id)
 	return id
 }
 

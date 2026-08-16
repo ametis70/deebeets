@@ -115,7 +115,7 @@ func (n *Notifier) post(ctx context.Context, p Payload) error {
 	if err != nil {
 		return fmt.Errorf("POST %s: %w", n.cfg.WebhookURL, err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("POST %s: server returned %d", n.cfg.WebhookURL, resp.StatusCode)
 	}

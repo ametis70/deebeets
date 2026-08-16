@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -67,7 +68,7 @@ func Open(path string) (*Store, error) {
 
 	s := &Store{db: db}
 	if err := s.migrate(); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, err
 	}
 	return s, nil
@@ -111,12 +112,16 @@ func (s *Store) migrate() error {
 			return err
 		}
 		if _, err := tx.Exec(string(body)); err != nil {
-			tx.Rollback()
+			if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+				return fmt.Errorf("apply migration %s: %w (rollback: %v)", name, err, rbErr)
+			}
 			return fmt.Errorf("apply migration %s: %w", name, err)
 		}
 		// PRAGMA can't be parameterized; target is an int we control.
 		if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", target)); err != nil {
-			tx.Rollback()
+			if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+				return fmt.Errorf("bump user_version: %w (rollback: %v)", err, rbErr)
+			}
 			return fmt.Errorf("bump user_version: %w", err)
 		}
 		if err := tx.Commit(); err != nil {

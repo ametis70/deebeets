@@ -82,7 +82,7 @@ func (s *Store) ListBlocks(ctx context.Context) ([]Block, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 	var out []Block
 	for rows.Next() {
 		var b Block

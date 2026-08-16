@@ -6,7 +6,7 @@ import (
 	"math/rand"
 	"testing"
 
-	"golang.org/x/crypto/blowfish"
+	"golang.org/x/crypto/blowfish" //nolint:staticcheck // Deezer protocol requires Blowfish
 )
 
 // encryptStripe is the inverse of decryptStripe, used only by the test to build

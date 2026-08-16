@@ -79,7 +79,7 @@ func (c *Client) getTrackURLViaMedia(ctx context.Context, trackToken, format str
 	if err != nil {
 		return "", classifyErr(err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode == http.StatusTooManyRequests {
 		return "", ErrRateLimited
 	}
@@ -189,7 +189,7 @@ func (c *Client) fetchImage(ctx context.Context, kind, picHash string, size int)
 	if err != nil {
 		return nil, "", err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode != http.StatusOK {
 		return nil, "", nil
 	}
@@ -217,11 +217,11 @@ func (c *Client) Download(ctx context.Context, rawURL string, resumeAt int64) (*
 		return nil, classifyErr(err)
 	}
 	if resp.StatusCode == http.StatusTooManyRequests {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return nil, ErrRateLimited
 	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return nil, fmt.Errorf("download: http %d", resp.StatusCode)
 	}
 	return resp, nil

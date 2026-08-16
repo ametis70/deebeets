@@ -73,8 +73,8 @@ func startServer(t *testing.T) (*Client, *fakeController) {
 	if err := srv.Listen(); err != nil {
 		t.Fatal(err)
 	}
-	go srv.Serve()
-	t.Cleanup(func() { srv.Close(context.Background()) })
+	go srv.Serve() //nolint:errcheck
+	t.Cleanup(func() { srv.Close(context.Background()) }) //nolint:errcheck
 
 	c := NewClient(sock)
 	for i := 0; i < 50 && !c.Available(); i++ {

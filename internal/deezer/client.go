@@ -127,7 +127,7 @@ func (c *Client) apiCallRetry(ctx context.Context, method string, args any, retr
 	if err != nil {
 		return nil, classifyErr(err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode == http.StatusTooManyRequests {
 		return nil, ErrRateLimited

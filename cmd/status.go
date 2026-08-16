@@ -47,7 +47,7 @@ func statusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer s.Close()
+			defer s.Close() //nolint:errcheck
 			counts, err := s.CountByState(ctx())
 			if err != nil {
 				return err
@@ -105,10 +105,10 @@ func printStatus(st control.StatusResponse) {
 		tw2 := tabwriter.NewWriter(cmdOut, 0, 0, 2, ' ', 0)
 		for _, s := range []string{store.DeezerStatusPresent, store.DeezerStatusReplaced, store.DeezerStatusMissing} {
 			if n, ok := st.AlbumAvailability[s]; ok && n > 0 {
-				fmt.Fprintf(tw2, "  %s\t%d\n", strings.ToLower(s), n)
+				_, _ = fmt.Fprintf(tw2, "  %s\t%d\n", strings.ToLower(s), n)
 			}
 		}
-		tw2.Flush()
+		tw2.Flush() //nolint:errcheck
 	}
 	fmt.Println("tracks:")
 	tw := tabwriter.NewWriter(cmdOut, 0, 0, 2, ' ', 0)
@@ -125,7 +125,7 @@ func printStatus(st control.StatusResponse) {
 				if l, ok := labels[s]; ok {
 					label = l
 				}
-				fmt.Fprintf(tw, "  %s\t%d\n", label, n)
+				_, _ = fmt.Fprintf(tw, "  %s\t%d\n", label, n)
 				seen[s] = true
 			}
 		}
@@ -137,9 +137,9 @@ func printStatus(st control.StatusResponse) {
 	}
 	sort.Strings(extra)
 	for _, s := range extra {
-		fmt.Fprintf(tw, "  %s\t%d\n", s, st.Counts[s])
+		_, _ = fmt.Fprintf(tw, "  %s\t%d\n", s, st.Counts[s])
 	}
-	tw.Flush()
+	tw.Flush() //nolint:errcheck
 }
 
 

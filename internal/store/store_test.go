@@ -12,7 +12,7 @@ func openTest(t *testing.T) *Store {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	t.Cleanup(func() { s.Close() })
+	t.Cleanup(func() { s.Close() }) //nolint:errcheck
 	return s
 }
 
@@ -46,7 +46,7 @@ func TestUpsertIdempotent(t *testing.T) {
 func TestClaimDownloadFlow(t *testing.T) {
 	ctx := context.Background()
 	s := openTest(t)
-	s.Upsert(ctx, Discovered{SngID: 10, Title: "T"})
+	s.Upsert(ctx, Discovered{SngID: 10, Title: "T"}) //nolint:errcheck
 
 	it, ok, err := s.ClaimDownload(ctx)
 	if err != nil || !ok {
@@ -78,8 +78,8 @@ func TestClaimDownloadFlow(t *testing.T) {
 func TestRecoverInterrupted(t *testing.T) {
 	ctx := context.Background()
 	s := openTest(t)
-	s.Upsert(ctx, Discovered{SngID: 1})
-	s.ClaimDownload(ctx) // -> downloading
+	s.Upsert(ctx, Discovered{SngID: 1}) //nolint:errcheck
+	s.ClaimDownload(ctx) //nolint:errcheck // -> downloading
 
 	n, err := s.RecoverInterrupted(ctx)
 	if err != nil {
@@ -98,8 +98,8 @@ func TestRecoverInterruptedAllStages(t *testing.T) {
 	ctx := context.Background()
 	s := openTest(t)
 	for i, state := range []string{StateDownloading, StateTagging, StateConverting} {
-		s.Upsert(ctx, Discovered{SngID: int64(i + 1)})
-		s.SetState(ctx, int64(i+1), state)
+		s.Upsert(ctx, Discovered{SngID: int64(i + 1)}) //nolint:errcheck
+		s.SetState(ctx, int64(i+1), state) //nolint:errcheck
 	}
 	n, err := s.RecoverInterrupted(ctx)
 	if err != nil {
@@ -125,7 +125,7 @@ func TestBlocklist(t *testing.T) {
 	if !blocked {
 		t.Fatal("expected blocked")
 	}
-	s.Upsert(ctx, Discovered{SngID: 5, Title: "B"})
+	s.Upsert(ctx, Discovered{SngID: 5, Title: "B"}) //nolint:errcheck
 	it, _ := s.Get(ctx, 5)
 	if it.State != StateBlocklisted {
 		t.Fatalf("state = %q, want blocklisted", it.State)
@@ -143,11 +143,11 @@ func TestBlocklist(t *testing.T) {
 func TestRequeueForceModes(t *testing.T) {
 	ctx := context.Background()
 	s := openTest(t)
-	s.Upsert(ctx, Discovered{SngID: 1})
-	s.ClaimDownload(ctx)
-	s.MarkDownloaded(ctx, 1, "FLAC", "path.flac")
-	s.MarkTagged(ctx, 1)
-	s.MarkConverted(ctx, 1)
+	s.Upsert(ctx, Discovered{SngID: 1}) //nolint:errcheck
+	s.ClaimDownload(ctx) //nolint:errcheck
+	s.MarkDownloaded(ctx, 1, "FLAC", "path.flac") //nolint:errcheck
+	s.MarkTagged(ctx, 1) //nolint:errcheck
+	s.MarkConverted(ctx, 1) //nolint:errcheck
 
 	n, err := s.Requeue(ctx, []int64{1}, false)
 	if err != nil || n != 1 {
@@ -158,8 +158,8 @@ func TestRequeueForceModes(t *testing.T) {
 		t.Fatalf("state=%q file=%q", it.State, it.FilePath)
 	}
 
-	s.MarkConverted(ctx, 1)
-	s.Requeue(ctx, []int64{1}, true)
+	s.MarkConverted(ctx, 1) //nolint:errcheck
+	s.Requeue(ctx, []int64{1}, true) //nolint:errcheck
 	it, _ = s.Get(ctx, 1)
 	if it.State != StateQueued || it.FilePath != "" {
 		t.Fatalf("force-all state=%q file=%q", it.State, it.FilePath)
@@ -171,12 +171,12 @@ func TestBatchRetry(t *testing.T) {
 	s := openTest(t)
 
 	for _, id := range []int64{1, 2, 3} {
-		s.Upsert(ctx, Discovered{SngID: id})
-		s.ClaimDownload(ctx)
+		s.Upsert(ctx, Discovered{SngID: id}) //nolint:errcheck
+		s.ClaimDownload(ctx) //nolint:errcheck
 	}
-	s.MarkDownloaded(ctx, 3, "FLAC", "p.flac")
-	s.MarkTagged(ctx, 3)
-	s.MarkConverted(ctx, 3)
+	s.MarkDownloaded(ctx, 3, "FLAC", "p.flac") //nolint:errcheck
+	s.MarkTagged(ctx, 3) //nolint:errcheck
+	s.MarkConverted(ctx, 3) //nolint:errcheck
 
 	if err := s.MarkInFailedBatch(ctx, []int64{1, 2}, "timeout"); err != nil {
 		t.Fatal(err)
@@ -204,7 +204,7 @@ func TestBatchRetry(t *testing.T) {
 			it1.State, it1.InFailedBatch, it1.BatchAttempts)
 	}
 
-	s.MarkFailedDownload(ctx, 1, "still failing")
+	s.MarkFailedDownload(ctx, 1, "still failing") //nolint:errcheck
 	n, err := s.RequeueAllFailed(ctx)
 	if err != nil || n != 1 {
 		t.Fatalf("RequeueAllFailed n=%d err=%v", n, err)
@@ -221,13 +221,13 @@ func TestRequeueForRetag(t *testing.T) {
 	s := openTest(t)
 
 	for _, id := range []int64{1, 2, 3} {
-		s.Upsert(ctx, Discovered{SngID: id})
-		s.ClaimDownload(ctx)
-		s.MarkDownloaded(ctx, id, "FLAC", "f")
+		s.Upsert(ctx, Discovered{SngID: id}) //nolint:errcheck
+		s.ClaimDownload(ctx) //nolint:errcheck
+		s.MarkDownloaded(ctx, id, "FLAC", "f") //nolint:errcheck
 	}
-	s.MarkTagged(ctx, 1)
-	s.MarkConverted(ctx, 2)
-	s.MarkFailedTag(ctx, 3, "oops")
+	s.MarkTagged(ctx, 1) //nolint:errcheck
+	s.MarkConverted(ctx, 2) //nolint:errcheck
+	s.MarkFailedTag(ctx, 3, "oops") //nolint:errcheck
 
 	n, err := s.RequeueForRetag(ctx)
 	if err != nil || n != 3 {

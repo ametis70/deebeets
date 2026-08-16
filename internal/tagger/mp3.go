@@ -12,7 +12,7 @@ func writeMP3(path string, md Metadata, f FieldSet) error {
 	if err != nil {
 		return fmt.Errorf("open mp3 tags: %w", err)
 	}
-	defer tag.Close()
+	defer tag.Close() //nolint:errcheck
 	tag.SetVersion(4)
 
 	set := func(field, id, val string) {

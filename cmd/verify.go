@@ -27,7 +27,7 @@ func verifyCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer s.Close()
+			defer s.Close() //nolint:errcheck
 
 			items, err := s.FinishedItems(ctx())
 			if err != nil {
@@ -48,11 +48,11 @@ func verifyCmd() *cobra.Command {
 			}
 			fmt.Printf("%d of %d finished item(s) missing from disk:\n", len(missing), len(items))
 			tw := tabwriter.NewWriter(cmdOut, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "SNG_ID\tARTIST\tTITLE\tPATH")
+			fmt.Fprintln(tw, "SNG_ID\tARTIST\tTITLE\tPATH") //nolint:errcheck
 			for _, it := range missing {
-				fmt.Fprintf(tw, "%d\t%s\t%s\t%s\n", it.SngID, trunc(it.Artist, 24), trunc(it.Title, 32), it.FilePath)
+				_, _ = fmt.Fprintf(tw, "%d\t%s\t%s\t%s\n", it.SngID, trunc(it.Artist, 24), trunc(it.Title, 32), it.FilePath)
 			}
-			tw.Flush()
+			tw.Flush() //nolint:errcheck
 			fmt.Println("\nrun `deeznt redownload --missing` to restore them")
 			return nil
 		},

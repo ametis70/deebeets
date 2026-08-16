@@ -88,7 +88,7 @@ func decode(r *http.Request, v any) error {
 	if r.Body == nil {
 		return nil
 	}
-	defer r.Body.Close()
+	defer r.Body.Close() //nolint:errcheck
 	err := json.NewDecoder(r.Body).Decode(v)
 	if errors.Is(err, io.EOF) {
 		return nil
